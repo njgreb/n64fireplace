@@ -1,0 +1,10 @@
+# Build artifacts & generated assets (recreated automatically by ./build.sh)
+build/
+filesystem/
+assets_raw/
+*.z64
+*.elf
+*.dfs
+
+# macOS
+.DS_Store
