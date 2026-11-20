@@ -2,10 +2,13 @@
 
 A cozy low-poly 3D Nintendo 64 fireplace screensaver designed for a real **CRT TV** and **stock 4MB N64** (auto-detects NTSC 60Hz & PAL 50Hz via `libdragon`).
 
+> **Just want to play it?** Grab the ready-to-run `hearth64.z64` ROM from the [Latest Release](https://github.com/njgreb/n64fireplace/releases/latest) and copy it onto your EverDrive-64, SummerCart64, or open it in `ares`!
+
 ## Features
-- **Classic 90s N64 Low-Poly 3D Hearth**: Textured rustic stone chimney, soot-kissed angled firebrick firebox, heavy oak mantle with flickering beeswax candles, steaming mug, alpine night painting, wrought-iron grate & andirons, braided hearth rug, stacked firewood nook, and a starry cabin window.
+- **Classic 90s N64 Low-Poly 3D Hearth**: Textured rustic stone chimney, soot-kissed angled firebrick firebox, heavy oak mantle with flickering beeswax candles, steaming mug, starry alpine night painting, festive mini pumpkins, wrought-iron grate & andirons, braided hearth rug, stacked firewood nook, and a starry cabin window.
 - **Dynamic Flickering Firelight**: Real-time multi-frequency point lighting illuminates the stone, logs, rug, and cabin walls—and shifts hue with your chosen flame mood.
-- **Layered 3D Flames, Coals & Embers**: Smooth IA8-blended 3D flame tongues, glowing ash/coal mound, and 76 swirling sparks rising up the chimney.
+- **Layered 3D Flames, Coals & Embers**: Smooth IA8-blended 3D flame tongues, glowing ash/coal mound, swirling sparks, and interactive 3D log tossing.
+- **Playful Hearth Visitors & Secret Easter Eggs**: Random appearances by a strutting **Thanksgiving Turkey**, a hopping **Frog**, and a cozy **Orange Tabby Cat** — each with its own sound effect and secret **A + B** Easter egg!
 - **Cozy Audio Mixer**:
   - Seamless warm hearth rumble & fluttering flame roar
   - 6 randomized wood crackle/pop one-shots with organic pitch & stereo pan variation
