@@ -537,6 +537,222 @@ def gen_meow():
     write_wav(os.path.join(OUT_DIR, "meow.wav"), normalize(out, peak=0.78))
 
 
+def gen_christmas_loop():
+    """
+    20s seamless nostalgic 90s N64 winter celesta/music-box & warm Rhodes pad loop.
+    Chords: Cmaj9 -> Am9 -> Fmaj7 -> G6add9 (5s each), with gentle sleigh-bell shimmer.
+    """
+    rng = random.Random(1225)
+    loop_sec = 20.0
+    loop_n = int(loop_sec * SR)
+    total_n = loop_n * 2
+
+    chords = [
+        (0.0,  [48, 55, 60, 62, 64, 67], [(0.3, 76), (1.7, 79), (3.1, 74), (4.2, 72)], [0.25, 2.75]),
+        (5.0,  [45, 52, 57, 59, 60, 64], [(5.3, 72), (6.8, 76), (8.2, 74), (9.3, 71)], [5.25, 7.75]),
+        (10.0, [41, 48, 53, 57, 60, 64], [(10.3, 72), (11.8, 74), (13.1, 76), (14.2, 72)], [10.25, 12.75]),
+        (15.0, [43, 50, 55, 57, 59, 62], [(15.3, 71), (16.7, 74), (18.1, 79), (19.1, 76)], [15.25, 17.75]),
+    ]
+
+    buf = [0.0] * total_n
+
+    for cycle in range(2):
+        base_t = cycle * loop_sec
+        for c_start, notes, bells, sleigh_times in chords:
+            dur = 5.6
+            i0 = int((base_t + c_start) * SR)
+            length = int(dur * SR)
+            for ni, m in enumerate(notes):
+                hz = midi_to_hz(m)
+                hz2 = hz * (1.0020 if ni % 2 == 0 else 0.9980)
+                amp = 0.11 if ni == 0 else 0.072
+                for j in range(length):
+                    idx = i0 + j
+                    if idx >= total_n:
+                        break
+                    t = j / float(SR)
+                    atk = min(1.0, t / 0.50)
+                    rel = 1.0 if t < 4.2 else max(0.0, 1.0 - (t - 4.2) / 1.4)
+                    env = (atk ** 1.4) * (rel ** 1.6)
+                    w = (
+                        0.68 * math.sin(2 * math.pi * hz * t)
+                        + 0.24 * math.sin(2 * math.pi * hz2 * t)
+                        + 0.08 * math.sin(2 * math.pi * hz * 2.0 * t) * math.exp(-t * 0.8)
+                    )
+                    buf[idx] += amp * env * w
+
+            # Crystalline celesta / music-box winter melody
+            for b_start, bm in bells:
+                bhz = midi_to_hz(bm)
+                bi0 = int((base_t + b_start) * SR)
+                blen = int(2.6 * SR)
+                for j in range(blen):
+                    idx = bi0 + j
+                    if idx >= total_n:
+                        break
+                    t = j / float(SR)
+                    env = min(1.0, t / 0.014) * math.exp(-t * 1.65)
+                    w = (
+                        0.72 * math.sin(2 * math.pi * bhz * t)
+                        + 0.22 * math.sin(2 * math.pi * bhz * 2.0 * t) * math.exp(-t * 3.5)
+                        + 0.06 * math.sin(2 * math.pi * bhz * 3.01 * t) * math.exp(-t * 6.0)
+                    )
+                    buf[idx] += 0.082 * env * w
+
+            # Gentle soft distant sleigh-bell shimmer accents
+            for st in sleigh_times:
+                si0 = int((base_t + st) * SR)
+                slen = int(0.35 * SR)
+                for j in range(slen):
+                    idx = si0 + j
+                    if idx >= total_n:
+                        break
+                    t = j / float(SR)
+                    env = min(1.0, t / 0.025) * math.exp(-t * 8.5)
+                    shimmer = (
+                        0.40 * math.sin(2 * math.pi * 3480.0 * t)
+                        + 0.35 * math.sin(2 * math.pi * 4320.0 * t)
+                        + 0.25 * math.sin(2 * math.pi * 5180.0 * t)
+                        + 0.22 * rng.uniform(-1.0, 1.0)
+                    )
+                    buf[idx] += 0.016 * env * shimmer
+
+    raw_loop = buf[loop_n:loop_n * 2]
+    delays = [(int(0.19 * SR), 0.24), (int(0.31 * SR), 0.18), (int(0.47 * SR), 0.12)]
+    wet = list(raw_loop)
+    for d_samp, d_gain in delays:
+        for i in range(loop_n):
+            wet[i] += raw_loop[(i - d_samp) % loop_n] * d_gain
+    wet = one_pole_lp(wet, 2800.0)
+    wet = normalize(wet, peak=0.58)
+    write_wav(os.path.join(OUT_DIR, "christmas_loop.wav"), wet)
+
+
+def gen_snow_loop():
+    """12s seamless cozy muffled winter breeze + soft distant frost-chime whispers."""
+    rng = random.Random(1201)
+    loop_sec = 12.0
+    xfade_sec = 2.0
+    total_n = int((loop_sec + xfade_sec) * SR)
+    loop_n = int(loop_sec * SR)
+
+    p1 = pink_noise(total_n, rng)
+    p2 = pink_noise(total_n, rng)
+
+    breeze = one_pole_hp(one_pole_lp(p1, 780.0), 110.0)
+    hush = one_pole_hp(one_pole_lp(p2, 1800.0), 500.0)
+
+    out = [0.0] * total_n
+    for i in range(total_n):
+        t = i / float(SR)
+        gust = 0.65 + 0.35 * math.sin(2.0 * math.pi * t / 4.0) + 0.18 * math.sin(2.0 * math.pi * t / 3.0 + 1.2)
+        out[i] = (breeze[i] * 0.95 + hush[i] * 0.42) * gust
+
+    # Very soft, sparse distant frost-chime / sleigh-bell whispers
+    chime_freqs = [2093.0, 2637.0, 3136.0, 3520.0]
+    for _ in range(18):
+        pos = rng.randint(400, total_n - int(0.8 * SR))
+        hz = rng.choice(chime_freqs)
+        amp = rng.uniform(0.015, 0.036)
+        dec = rng.uniform(0.10, 0.24)
+        for j in range(int(dec * SR * 4)):
+            if pos + j < total_n:
+                t = j / float(SR)
+                env = min(1.0, t / 0.015) * math.exp(-t / dec)
+                out[pos + j] += amp * env * math.sin(2.0 * math.pi * hz * t)
+
+    loop = normalize(crossfade_loop(out, loop_n), peak=0.58)
+    write_wav(os.path.join(OUT_DIR, "snow_loop.wav"), loop)
+
+
+def gen_penguin():
+    """Playful SM64-style cheerful penguin double-chirp ('kwah-kwah!')."""
+    dur = 0.58
+    n = int(dur * SR)
+    out = [0.0] * n
+    syllables = [
+        (0.02, 0.21, 520.0, 820.0, 460.0, 0.95),
+        (0.27, 0.25, 550.0, 840.0, 450.0, 1.00),
+    ]
+    for t0, sdur, f_start, f_peak, f_end, amp in syllables:
+        i0 = int(t0 * SR)
+        slen = int(sdur * SR)
+        phase = 0.0
+        for j in range(slen):
+            idx = i0 + j
+            if idx >= n:
+                break
+            t = j / float(SR)
+            u = j / float(slen)
+            if u < 0.35:
+                freq = f_start + (f_peak - f_start) * math.sin((u / 0.35) * math.pi * 0.5)
+            else:
+                v = (u - 0.35) / 0.65
+                freq = f_peak - (f_peak - f_end) * (v ** 1.15)
+            freq *= 1.0 + 0.025 * math.sin(2.0 * math.pi * 22.0 * t)
+            phase += 2.0 * math.pi * freq / SR
+            env = min(1.0, u / 0.10) * ((1.0 - u) ** 0.55)
+            w = (
+                0.50 * math.sin(phase)
+                + 0.38 * math.sin(2.0 * phase + 0.3)
+                + 0.26 * math.sin(3.0 * phase)
+                + 0.14 * math.sin(4.0 * phase)
+            )
+            out[idx] += amp * env * w
+    out = one_pole_hp(one_pole_lp(out, 3200.0), 280.0)
+    write_wav(os.path.join(OUT_DIR, "penguin.wav"), normalize(out, peak=0.82))
+
+
+def gen_snowglobe():
+    """Crisp festive sleigh-bell shake + ascending dreamy celesta sparkle cascade."""
+    rng = random.Random(1224)
+    dur = 1.45
+    n = int(dur * SR)
+    out = [0.0] * n
+
+    # 1. Crisp sleigh-bell shake clusters (4 shakes across ~0.75s)
+    shakes = [0.04, 0.22, 0.42, 0.64]
+    bell_partials = [2950.0, 3680.0, 4420.0, 5260.0, 6190.0]
+    noise_raw = one_pole_hp(one_pole_lp([rng.uniform(-1.0, 1.0) for _ in range(n)], 6800.0), 2600.0)
+    for st in shakes:
+        i0 = int(st * SR)
+        slen = int(0.24 * SR)
+        for j in range(slen):
+            idx = i0 + j
+            if idx >= n:
+                break
+            t = j / float(SR)
+            env = min(1.0, t / 0.008) * math.exp(-t * 14.0)
+            bell = 0.0
+            for bi, hz in enumerate(bell_partials):
+                bell += (0.28 - bi * 0.04) * math.sin(2.0 * math.pi * hz * t)
+            out[idx] += env * (bell * 0.55 + noise_raw[idx] * 0.22)
+
+    # 2. Ascending dreamy celesta sparkle cascade (C6 -> E6 -> G6 -> B6 -> C7 -> E7 -> G7)
+    notes = [
+        (0.18, 1046.5, 0.48),
+        (0.32, 1318.5, 0.55),
+        (0.46, 1568.0, 0.62),
+        (0.60, 1975.5, 0.68),
+        (0.74, 2093.0, 0.78),
+        (0.88, 2637.0, 0.84),
+        (1.00, 3136.0, 0.90),
+    ]
+    for t0, hz, amp in notes:
+        i0 = int(t0 * SR)
+        nlen = int(0.55 * SR)
+        for j in range(nlen):
+            idx = i0 + j
+            if idx >= n:
+                break
+            t = j / float(SR)
+            env = min(1.0, t / 0.005) * math.exp(-t * 5.2)
+            w = 0.74 * math.sin(2.0 * math.pi * hz * t) + 0.26 * math.sin(2.0 * math.pi * hz * 2.005 * t) * math.exp(-t * 8.0)
+            out[idx] += amp * env * w * 0.34
+
+    write_wav(os.path.join(OUT_DIR, "snowglobe.wav"), normalize(out, peak=0.84))
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating cozy hearth audio assets...")
@@ -551,7 +767,11 @@ def main():
     gen_ding()
     gen_magic()
     gen_meow()
-    print(f"Generated 16 audio WAVs in {OUT_DIR}")
+    gen_christmas_loop()
+    gen_snow_loop()
+    gen_penguin()
+    gen_snowglobe()
+    print(f"Generated 20 audio WAVs in {OUT_DIR}")
 
 
 if __name__ == "__main__":

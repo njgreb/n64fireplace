@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-IMAGE="hearth64-libdragon:preview"
+IMAGE="hearth64-libdragon:t3d"
 
 if [[ "${1:-}" == "regen" ]] || [[ ! -d assets_raw/textures ]] || [[ ! -d assets_raw/audio ]]; then
     echo "==> Generating procedural N64 textures & cozy audio..."

@@ -1,5 +1,4 @@
 #include "turkey.h"
-#include <GL/gl.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -20,6 +19,8 @@ static void trigger_voice(Turkey *tk) {
         tk->just_ribbit = true;
     } else if (tk->species == VISITOR_CAT) {
         tk->just_meowed = true;
+    } else if (tk->species == VISITOR_PENGUIN) {
+        tk->just_penguined = true;
     } else {
         tk->just_gobbled = true;
     }
@@ -45,10 +46,29 @@ static void start_visit(Turkey *tk, VisitorSpecies species) {
 
 void turkey_init(Turkey *tk) {
     memset(tk, 0, sizeof(*tk));
+    tk->season      = SEASON_THANKSGIVING;
     tk->species     = VISITOR_TURKEY;
     tk->state       = TURKEY_HIDDEN;
     // First visitor arrives ~7 seconds after boot
     tk->state_timer = 7.0f;
+}
+
+void turkey_set_season(Turkey *tk, Season season) {
+    tk->season        = season;
+    tk->pie_timer     = 0.0f;
+    tk->snowman_timer = 0.0f;
+    tk->magic_burst   = 0.0f;
+
+    if (tk->state == TURKEY_HIDDEN) {
+        if (tk->state_timer > 4.0f) tk->state_timer = 4.0f;
+        return;
+    }
+
+    if ((season == SEASON_CHRISTMAS && tk->species == VISITOR_TURKEY) ||
+        (season != SEASON_CHRISTMAS && tk->species == VISITOR_PENGUIN)) {
+        tk->state       = TURKEY_HIDDEN;
+        tk->state_timer = 3.5f;
+    }
 }
 
 void turkey_summon_species(Turkey *tk, VisitorSpecies sp) {
@@ -56,12 +76,26 @@ void turkey_summon_species(Turkey *tk, VisitorSpecies sp) {
 }
 
 void turkey_cycle_summon(Turkey *tk, int delta) {
+    static const VisitorSpecies roster[SEASON_COUNT][3] = {
+        { VISITOR_FROG,    VISITOR_CAT,  VISITOR_TURKEY }, // Spring
+        { VISITOR_CAT,     VISITOR_FROG, VISITOR_TURKEY }, // Summer
+        { VISITOR_TURKEY,  VISITOR_FROG, VISITOR_CAT    }, // Thanksgiving
+        { VISITOR_PENGUIN, VISITOR_FROG, VISITOR_CAT    }, // Christmas
+    };
+    int sidx = ((int)tk->season >= 0 && (int)tk->season < SEASON_COUNT) ? (int)tk->season : (int)SEASON_THANKSGIVING;
+    const VisitorSpecies *r = roster[sidx];
     if (tk->state == TURKEY_HIDDEN) {
-        VisitorSpecies sp = (delta >= 0) ? VISITOR_TURKEY : VISITOR_CAT;
-        start_visit(tk, sp);
+        start_visit(tk, (delta >= 0) ? r[0] : r[2]);
     } else {
-        VisitorSpecies next = (VisitorSpecies)(((int)tk->species + delta + VISITOR_COUNT) % VISITOR_COUNT);
-        start_visit(tk, next);
+        int cur = 0;
+        for (int i = 0; i < 3; i++) {
+            if (r[i] == tk->species) {
+                cur = i;
+                break;
+            }
+        }
+        int next_idx = (cur + delta + 3) % 3;
+        start_visit(tk, r[next_idx]);
     }
 }
 
@@ -71,8 +105,9 @@ void turkey_startle(Turkey *tk) {
     if (tk->state >= TURKEY_WALK_TO_FIRE) return;
     if (fabsf(tk->x) < 1.60f && tk->state != TURKEY_SCURRY) {
         tk->state      = TURKEY_SCURRY;
-        tk->hop_vy     = (tk->species == VISITOR_FROG) ? 2.40f
-                       : (tk->species == VISITOR_CAT)  ? 2.05f : 1.65f;
+        tk->hop_vy     = (tk->species == VISITOR_FROG)    ? 2.40f
+                       : (tk->species == VISITOR_CAT)     ? 2.05f
+                       : (tk->species == VISITOR_PENGUIN) ? 1.50f : 1.65f;
         tk->hop_pause  = 0.0f;
         tk->tail_flare = 1.0f;
         trigger_voice(tk);
@@ -87,11 +122,22 @@ bool turkey_trigger_roast(Turkey *tk) {
         tk->state != TURKEY_SCURRY) {
         return false;
     }
-    tk->state        = TURKEY_WALK_TO_FIRE;
-    tk->state_timer  = 0.0f;
-    tk->hop_vy       = 0.95f;
-    tk->tail_flare   = 1.0f;
-    tk->just_gobbled = true;
+    if (tk->season == SEASON_THANKSGIVING) {
+        tk->state        = TURKEY_WALK_TO_FIRE;
+        tk->state_timer  = 0.0f;
+        tk->hop_vy       = 0.95f;
+        tk->tail_flare   = 1.0f;
+        tk->just_gobbled = true;
+    } else {
+        tk->state        = TURKEY_STRUT_DANCE;
+        tk->state_timer  = 3.6f;
+        tk->hop_vy       = 1.65f;
+        tk->tail_flare   = 1.0f;
+        tk->just_gobbled = true;
+        tk->magic_burst  = 1.15f;
+        tk->burst_x      = tk->x;
+        tk->burst_z      = tk->z;
+    }
     return true;
 }
 
@@ -125,16 +171,34 @@ bool turkey_trigger_cat_nap(Turkey *tk) {
     return true;
 }
 
-void turkey_update(Turkey *tk, float dt) {
-    tk->just_gobbled      = false;
-    tk->just_ribbit       = false;
-    tk->just_meowed       = false;
-    tk->just_entered_fire = false;
-    tk->just_dinged       = false;
-    tk->just_cast_magic   = false;
-    tk->just_made_pie     = false;
+bool turkey_trigger_penguin_slide(Turkey *tk) {
+    if (tk->species != VISITOR_PENGUIN) return false;
+    if (tk->state != TURKEY_WALK_IN &&
+        tk->state != TURKEY_PAUSE_GOBBLE &&
+        tk->state != TURKEY_WALK_OUT &&
+        tk->state != TURKEY_SCURRY) {
+        return false;
+    }
+    tk->state          = TURKEY_PENGUIN_SLIDE;
+    tk->slide_elapsed  = 0.0f;
+    tk->hop_vy         = 1.45f;
+    tk->tail_flare     = 1.0f;
+    tk->just_penguined = true;
+    return true;
+}
 
-    // Update persistent Pumpkin Pie & magic sparkle burst timers even when visitor is hidden!
+void turkey_update(Turkey *tk, float dt) {
+    tk->just_gobbled       = false;
+    tk->just_ribbit        = false;
+    tk->just_meowed        = false;
+    tk->just_penguined     = false;
+    tk->just_entered_fire  = false;
+    tk->just_dinged        = false;
+    tk->just_cast_magic    = false;
+    tk->just_made_pie      = false;
+    tk->just_built_snowman = false;
+
+    // Update persistent Pumpkin Pie / Milk & Cookies, Mini Snowman & magic sparkle burst timers
     if (tk->pie_timer > 0.0f) {
         tk->pie_timer -= dt;
         if (tk->pie_timer < 0.0f) tk->pie_timer = 0.0f;
@@ -147,6 +211,18 @@ void turkey_update(Turkey *tk, float dt) {
             tk->pie_pop_vy = 0.0f;
         }
     }
+    if (tk->snowman_timer > 0.0f) {
+        tk->snowman_timer -= dt;
+        if (tk->snowman_timer < 0.0f) tk->snowman_timer = 0.0f;
+    }
+    if (tk->snowman_pop_y > 0.0f || tk->snowman_pop_vy > 0.0f) {
+        tk->snowman_pop_vy -= 7.5f * dt;
+        tk->snowman_pop_y  += tk->snowman_pop_vy * dt;
+        if (tk->snowman_pop_y < 0.0f) {
+            tk->snowman_pop_y  = 0.0f;
+            tk->snowman_pop_vy = 0.0f;
+        }
+    }
     if (tk->magic_burst > 0.0f) {
         tk->magic_burst -= dt;
         if (tk->magic_burst < 0.0f) tk->magic_burst = 0.0f;
@@ -155,11 +231,25 @@ void turkey_update(Turkey *tk, float dt) {
     if (tk->state == TURKEY_HIDDEN) {
         tk->state_timer -= dt;
         if (tk->state_timer <= 0.0f) {
-            // Random hearth visitor: ~40% Turkey, ~30% Frog, ~30% Cozy Cat!
             float r = tkrand01();
-            VisitorSpecies sp = (r < 0.40f) ? VISITOR_TURKEY
-                              : (r < 0.70f) ? VISITOR_FROG
-                                            : VISITOR_CAT;
+            VisitorSpecies sp;
+            if (tk->season == SEASON_CHRISTMAS) {
+                sp = (r < 0.45f) ? VISITOR_PENGUIN
+                   : (r < 0.73f) ? VISITOR_FROG
+                                 : VISITOR_CAT;
+            } else if (tk->season == SEASON_SPRING) {
+                sp = (r < 0.46f) ? VISITOR_FROG
+                   : (r < 0.78f) ? VISITOR_CAT
+                                 : VISITOR_TURKEY;
+            } else if (tk->season == SEASON_SUMMER) {
+                sp = (r < 0.48f) ? VISITOR_CAT
+                   : (r < 0.80f) ? VISITOR_FROG
+                                 : VISITOR_TURKEY;
+            } else {
+                sp = (r < 0.40f) ? VISITOR_TURKEY
+                   : (r < 0.70f) ? VISITOR_FROG
+                                 : VISITOR_CAT;
+            }
             start_visit(tk, sp);
         }
         return;
@@ -213,12 +303,14 @@ void turkey_update(Turkey *tk, float dt) {
         tk->cast_elapsed += dt;
         tk->walk_phase   += dt * 8.0f;
 
-        // At t = 0.72s, the magic beam hits the pumpkin -> POOF! Pumpkin Pie!
+        // At t = 0.72s, the magic beam hits the left hearth prop -> POOF! Pie or Milk & Cookies!
         if (!tk->cast_transformed && tk->cast_elapsed >= 0.72f) {
             tk->cast_transformed = true;
-            tk->pie_timer        = 45.0f; // stays a pie for 45s so you can even roast a turkey next!
+            tk->pie_timer        = 45.0f; // stays transformed for 45s
             tk->pie_pop_y        = 0.04f;
             tk->pie_pop_vy       = 1.65f;
+            tk->burst_x          = -1.46f;
+            tk->burst_z          = 0.34f;
             tk->magic_burst      = 1.15f;
             tk->just_made_pie    = true;
         }
@@ -315,6 +407,104 @@ void turkey_update(Turkey *tk, float dt) {
         if (tk->state_timer <= 0.0f) {
             tk->state       = TURKEY_HIDDEN;
             tk->state_timer = tkrand(20.0f, 36.0f);
+        }
+        return;
+    }
+
+    if (tk->state == TURKEY_STRUT_DANCE) {
+        tk->state_timer -= dt;
+        tk->hop_vy      -= 7.2f * dt;
+        tk->hop_y       += tk->hop_vy * dt;
+        if (tk->hop_y <= 0.0f) {
+            tk->hop_y = 0.0f;
+            if (tk->state_timer > 0.35f) {
+                tk->hop_vy = 1.35f;
+                if (tk->state_timer > 1.6f && tk->state_timer < 2.2f) {
+                    tk->just_gobbled = true;
+                }
+            } else {
+                tk->hop_vy = 0.0f;
+            }
+        }
+        tk->yaw        += 210.0f * dt;
+        tk->tail_flare  = 1.0f;
+        tk->walk_phase += dt * 14.0f;
+        if (tk->state_timer <= 0.0f) {
+            tk->state      = TURKEY_WALK_OUT;
+            tk->hop_y      = 0.0f;
+            tk->hop_vy     = 0.0f;
+            tk->tail_flare = 0.35f;
+        }
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // SM64 PENGUIN BELLY-SLIDE -> MINI SNOWMAN EASTER EGG
+    // ---------------------------------------------------------
+    if (tk->state == TURKEY_PENGUIN_SLIDE) {
+        if (tk->hop_y > 0.0f || tk->hop_vy > 0.0f) {
+            tk->hop_vy -= 7.2f * dt;
+            tk->hop_y  += tk->hop_vy * dt;
+            if (tk->hop_y < 0.0f) { tk->hop_y = 0.0f; tk->hop_vy = 0.0f; }
+        }
+        float ground_y = (fabsf(tk->x) <= 1.72f) ? 0.18f : 0.0f;
+        tk->y += (ground_y - tk->y) * fminf(1.0f, dt * 14.0f);
+
+        tk->slide_elapsed += dt;
+        float u = fminf(1.0f, tk->slide_elapsed / 1.85f);
+        float prev_x = tk->x;
+        float prev_z = tk->z;
+        // Swoop across the hearth on belly, then settle beside center-right to pop a Mini Snowman!
+        float gx = (u < 0.45f) ? -0.48f : 0.44f;
+        float gz = (u < 0.45f) ?  0.64f : 0.52f;
+        float rate = (u < 0.45f) ? 3.4f : 3.8f;
+        tk->x += (gx - tk->x) * fminf(1.0f, dt * rate);
+        tk->z += (gz - tk->z) * fminf(1.0f, dt * 4.5f);
+
+        float dx = tk->x - prev_x;
+        float dz = tk->z - prev_z;
+        if (fabsf(dx) + fabsf(dz) > 0.0005f) {
+            float goal_yaw = atan2f(dx, dz) * 57.29578f;
+            tk->yaw += (goal_yaw - tk->yaw) * fminf(1.0f, dt * 8.0f);
+        }
+        tk->walk_phase += dt * 12.0f;
+
+        if (tk->slide_elapsed >= 1.85f) {
+            tk->state              = TURKEY_PENGUIN_SNOWMAN;
+            tk->state_timer        = 2.4f;
+            tk->hop_vy             = 1.55f;
+            tk->snowman_x          = 0.0f;
+            tk->snowman_z          = 0.54f;
+            tk->snowman_timer      = 35.0f;
+            tk->snowman_pop_y      = 0.04f;
+            tk->snowman_pop_vy     = 1.85f;
+            tk->burst_x            = 0.0f;
+            tk->burst_z            = 0.54f;
+            tk->magic_burst        = 1.15f;
+            tk->just_built_snowman = true;
+        }
+        return;
+    }
+
+    if (tk->state == TURKEY_PENGUIN_SNOWMAN) {
+        if (tk->hop_y > 0.0f || tk->hop_vy > 0.0f) {
+            tk->hop_vy -= 7.2f * dt;
+            tk->hop_y  += tk->hop_vy * dt;
+            if (tk->hop_y < 0.0f) { tk->hop_y = 0.0f; tk->hop_vy = 0.0f; }
+        }
+        float prev_t = tk->state_timer;
+        tk->state_timer -= dt;
+        if (tk->hop_y <= 0.0f && tk->hop_vy <= 0.0f && tk->state_timer > 0.4f &&
+            (int)(tk->state_timer * 2.0f) != (int)(prev_t * 2.0f)) {
+            tk->hop_vy = 0.85f;
+        }
+        float goal_yaw = -42.0f;
+        tk->yaw += (goal_yaw - tk->yaw) * fminf(1.0f, dt * 6.5f);
+        tk->walk_phase += dt * 10.0f;
+        if (tk->state_timer <= 0.0f) {
+            tk->state          = TURKEY_WALK_OUT;
+            tk->dir            = 1.0f;
+            tk->just_penguined = true;
         }
         return;
     }
@@ -490,6 +680,66 @@ void turkey_update(Turkey *tk, float dt) {
             default:
                 break;
         }
+    } else if (tk->species == VISITOR_PENGUIN) {
+        // ---------------------------------------------------------
+        // SM64-STYLE WADDLING PENGUIN AI
+        // ---------------------------------------------------------
+        switch (tk->state) {
+            case TURKEY_WALK_IN: {
+                tk->x += tk->dir * 0.60f * dt;
+                tk->walk_phase += dt * 8.2f;
+                if ((tk->dir > 0.0f && tk->x >= tk->pause_x) ||
+                    (tk->dir < 0.0f && tk->x <= tk->pause_x)) {
+                    tk->state          = TURKEY_PAUSE_GOBBLE;
+                    tk->state_timer    = tkrand(2.8f, 4.0f);
+                    tk->tail_flare     = 1.0f;
+                    tk->just_penguined = true;
+                }
+                break;
+            }
+
+            case TURKEY_PAUSE_GOBBLE: {
+                tk->state_timer -= dt;
+                target_yaw       = (tk->dir > 0.0f) ? 28.0f : -28.0f;
+                tk->tail_flare  += (1.0f - tk->tail_flare) * fminf(1.0f, dt * 5.0f);
+                tk->walk_phase  += dt * 6.5f;
+
+                if (tk->state_timer < 1.55f && tk->state_timer + dt >= 1.55f) {
+                    tk->tail_flare     = 1.0f;
+                    tk->just_penguined = true;
+                }
+                if (tk->state_timer <= 0.0f) {
+                    tk->state = TURKEY_WALK_OUT;
+                }
+                break;
+            }
+
+            case TURKEY_WALK_OUT: {
+                tk->x += tk->dir * 0.64f * dt;
+                tk->walk_phase += dt * 8.5f;
+                if (fabsf(tk->x) > 2.65f) {
+                    tk->state       = TURKEY_HIDDEN;
+                    tk->state_timer = tkrand(22.0f, 40.0f);
+                }
+                break;
+            }
+
+            case TURKEY_SCURRY: {
+                tk->x += tk->dir * 1.55f * dt;
+                tk->walk_phase += dt * 16.0f;
+                if (!in_air) {
+                    tk->hop_vy = 1.25f;
+                }
+                if (fabsf(tk->x) > 2.65f) {
+                    tk->state       = TURKEY_HIDDEN;
+                    tk->state_timer = tkrand(20.0f, 36.0f);
+                }
+                break;
+            }
+
+            default:
+                break;
+        }
     } else {
         // ---------------------------------------------------------
         // TURKEY STRUTTING AI
@@ -552,106 +802,629 @@ void turkey_update(Turkey *tk, float dt) {
     tk->head_turn += (target_head_turn - tk->head_turn) * fminf(1.0f, dt * 7.0f);
 }
 
-// Helper: draws a clean untextured low-poly colored box with proper unit normals
-static void draw_cbox(float x0, float y0, float z0,
+// Mesh-builder helpers (emit vertices directly into T3DMeshBuilder)
+static void emit_cbox(T3DMeshBuilder *b,
+                      float x0, float y0, float z0,
                       float x1, float y1, float z1) {
-    glBegin(GL_QUADS);
-    // Front (+Z)
-    glNormal3f(0, 0, 1);
-    glVertex3f(x0, y0, z1); glVertex3f(x1, y0, z1); glVertex3f(x1, y1, z1); glVertex3f(x0, y1, z1);
-    // Back (-Z)
-    glNormal3f(0, 0, -1);
-    glVertex3f(x1, y0, z0); glVertex3f(x0, y0, z0); glVertex3f(x0, y1, z0); glVertex3f(x1, y1, z0);
-    // Left (-X)
-    glNormal3f(-1, 0, 0);
-    glVertex3f(x0, y0, z0); glVertex3f(x0, y0, z1); glVertex3f(x0, y1, z1); glVertex3f(x0, y1, z0);
-    // Right (+X)
-    glNormal3f(1, 0, 0);
-    glVertex3f(x1, y0, z1); glVertex3f(x1, y0, z0); glVertex3f(x1, y1, z0); glVertex3f(x1, y1, z1);
-    // Top (+Y)
-    glNormal3f(0, 1, 0);
-    glVertex3f(x0, y1, z1); glVertex3f(x1, y1, z1); glVertex3f(x1, y1, z0); glVertex3f(x0, y1, z0);
-    // Bottom (-Y)
-    glNormal3f(0, -1, 0);
-    glVertex3f(x0, y0, z0); glVertex3f(x1, y0, z0); glVertex3f(x1, y0, z1); glVertex3f(x0, y0, z1);
-    glEnd();
+    t3d_mb_set_normal(b, 0, 0, 1);
+    t3d_mb_push_quad(b, x0, y0, z1,  x1, y0, z1,  x1, y1, z1,  x0, y1, z1);
+    t3d_mb_set_normal(b, 0, 0, -1);
+    t3d_mb_push_quad(b, x1, y0, z0,  x0, y0, z0,  x0, y1, z0,  x1, y1, z0);
+    t3d_mb_set_normal(b, -1, 0, 0);
+    t3d_mb_push_quad(b, x0, y0, z0,  x0, y0, z1,  x0, y1, z1,  x0, y1, z0);
+    t3d_mb_set_normal(b, 1, 0, 0);
+    t3d_mb_push_quad(b, x1, y0, z1,  x1, y0, z0,  x1, y1, z0,  x1, y1, z1);
+    t3d_mb_set_normal(b, 0, 1, 0);
+    t3d_mb_push_quad(b, x0, y1, z1,  x1, y1, z1,  x1, y1, z0,  x0, y1, z0);
+    t3d_mb_set_normal(b, 0, -1, 0);
+    t3d_mb_push_quad(b, x0, y0, z0,  x1, y0, z0,  x1, y0, z1,  x0, y0, z1);
 }
 
-// Helper: authentic 90s N64 12-triangle faceted low-poly gem/ellipsoid (outward CCW, ~3x faster than 32-tri!)
-static void draw_gem(float rx, float ry, float rz) {
+static void rotate_zx(float lx, float ly, float lz,
+                      float cz, float sz, float cx, float sx,
+                      float *ox, float *oy, float *oz) {
+    float x1 = lx * cz - ly * sz;
+    float y1 = lx * sz + ly * cz;
+    *ox = x1;
+    *oy = y1 * cx - lz * sx;
+    *oz = y1 * sx + lz * cx;
+}
+
+static void emit_cbox_xform(T3DMeshBuilder *b,
+                            float x0, float y0, float z0,
+                            float x1, float y1, float z1,
+                            float deg_z, float deg_x,
+                            float tx, float ty, float tz,
+                            float cr, float cg, float cb) {
+    const float rad = 0.0174532925f;
+    float cz = cosf(deg_z * rad), sz = sinf(deg_z * rad);
+    float cx = cosf(deg_x * rad), sx = sinf(deg_x * rad);
+
+    static const float nrm[6][3] = {
+        { 0, 0, 1}, { 0, 0,-1}, {-1, 0, 0}, { 1, 0, 0}, { 0, 1, 0}, { 0,-1, 0}
+    };
+    float pts[6][4][3] = {
+        {{x0,y0,z1}, {x1,y0,z1}, {x1,y1,z1}, {x0,y1,z1}},
+        {{x1,y0,z0}, {x0,y0,z0}, {x0,y1,z0}, {x1,y1,z0}},
+        {{x0,y0,z0}, {x0,y0,z1}, {x0,y1,z1}, {x0,y1,z0}},
+        {{x1,y0,z1}, {x1,y0,z0}, {x1,y1,z0}, {x1,y1,z1}},
+        {{x0,y1,z1}, {x1,y1,z1}, {x1,y1,z0}, {x0,y1,z0}},
+        {{x0,y0,z0}, {x1,y0,z0}, {x1,y0,z1}, {x0,y0,z1}},
+    };
+
+    for (int f = 0; f < 6; f++) {
+        float wnx, wny, wnz;
+        rotate_zx(nrm[f][0], nrm[f][1], nrm[f][2], cz, sz, cx, sx, &wnx, &wny, &wnz);
+        T3DBuildVert v[4];
+        for (int k = 0; k < 4; k++) {
+            float wx, wy, wz;
+            rotate_zx(pts[f][k][0], pts[f][k][1], pts[f][k][2], cz, sz, cx, sx, &wx, &wy, &wz);
+            v[k] = (T3DBuildVert){ wx + tx, wy + ty, wz + tz, wnx, wny, wnz, 0.0f, 0.0f, cr, cg, cb, 1.0f };
+        }
+        t3d_mb_push_quad_vc(b, &v[0], &v[1], &v[2], &v[3]);
+    }
+}
+
+static void emit_gem_tris_xform(T3DMeshBuilder *b,
+                                float ox, float oy, float oz,
+                                float rx, float ry, float rz,
+                                float deg_z, float deg_x,
+                                float tx, float ty, float tz,
+                                float cr, float cg, float cb) {
+    static const float cs[7] = { 1.0f,  0.5f, -0.5f, -1.0f, -0.5f,  0.5f, 1.0f };
+    static const float sn[7] = { 0.0f, -0.866f,-0.866f, 0.0f,  0.866f, 0.866f, 0.0f };
+    const float rad = 0.0174532925f;
+    float cz = cosf(deg_z * rad), sz = sinf(deg_z * rad);
+    float cx = cosf(deg_x * rad), sx = sinf(deg_x * rad);
+
+    for (int i = 0; i < 6; i++) {
+        float p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z;
+        float n0x, n0y, n0z, n1x, n1y, n1z, n2x, n2y, n2z;
+        rotate_zx(ox, oy + ry, oz, cz, sz, cx, sx, &p0x, &p0y, &p0z);
+        rotate_zx(ox + cs[i] * rx, oy, oz + sn[i] * rz, cz, sz, cx, sx, &p1x, &p1y, &p1z);
+        rotate_zx(ox + cs[i + 1] * rx, oy, oz + sn[i + 1] * rz, cz, sz, cx, sx, &p2x, &p2y, &p2z);
+        rotate_zx(0.0f, 1.0f, 0.0f, cz, sz, cx, sx, &n0x, &n0y, &n0z);
+        rotate_zx(cs[i], 0.35f, sn[i], cz, sz, cx, sx, &n1x, &n1y, &n1z);
+        rotate_zx(cs[i + 1], 0.35f, sn[i + 1], cz, sz, cx, sx, &n2x, &n2y, &n2z);
+        T3DBuildVert v0 = { p0x + tx, p0y + ty, p0z + tz, n0x, n0y, n0z, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { p1x + tx, p1y + ty, p1z + tz, n1x, n1y, n1z, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { p2x + tx, p2y + ty, p2z + tz, n2x, n2y, n2z, 0, 0, cr, cg, cb, 1.0f };
+        t3d_mb_push_tri_vc(b, &v0, &v1, &v2);
+    }
+    for (int i = 0; i < 6; i++) {
+        float p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z;
+        float n0x, n0y, n0z, n1x, n1y, n1z, n2x, n2y, n2z;
+        rotate_zx(ox, oy - ry, oz, cz, sz, cx, sx, &p0x, &p0y, &p0z);
+        rotate_zx(ox + cs[i + 1] * rx, oy, oz + sn[i + 1] * rz, cz, sz, cx, sx, &p1x, &p1y, &p1z);
+        rotate_zx(ox + cs[i] * rx, oy, oz + sn[i] * rz, cz, sz, cx, sx, &p2x, &p2y, &p2z);
+        rotate_zx(0.0f, -1.0f, 0.0f, cz, sz, cx, sx, &n0x, &n0y, &n0z);
+        rotate_zx(cs[i + 1], -0.35f, sn[i + 1], cz, sz, cx, sx, &n1x, &n1y, &n1z);
+        rotate_zx(cs[i], -0.35f, sn[i], cz, sz, cx, sx, &n2x, &n2y, &n2z);
+        T3DBuildVert v0 = { p0x + tx, p0y + ty, p0z + tz, n0x, n0y, n0z, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { p1x + tx, p1y + ty, p1z + tz, n1x, n1y, n1z, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { p2x + tx, p2y + ty, p2z + tz, n2x, n2y, n2z, 0, 0, cr, cg, cb, 1.0f };
+        t3d_mb_push_tri_vc(b, &v0, &v1, &v2);
+    }
+}
+
+static void emit_gem_tris_at(T3DMeshBuilder *b,
+                             float ox, float oy, float oz,
+                             float rx, float ry, float rz,
+                             float cr, float cg, float cb) {
+    emit_gem_tris_xform(b, ox, oy, oz, rx, ry, rz, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, cr, cg, cb);
+}
+
+static void draw_dyn_gem(float rx, float ry, float rz, float cr, float cg, float cb) {
     static const float cs[7] = { 1.0f,  0.5f, -0.5f, -1.0f, -0.5f,  0.5f, 1.0f };
     static const float sn[7] = { 0.0f, -0.866f,-0.866f, 0.0f,  0.866f, 0.866f, 0.0f };
 
-    glBegin(GL_TRIANGLES);
-    // Top pyramid (6 tris, CCW from above)
+    t3d_dyn_begin_tris(NULL, T3D_PROP_SCALE, false, true, true, true);
     for (int i = 0; i < 6; i++) {
-        glNormal3f(0.0f, 1.0f, 0.0f);
-        glVertex3f(0.0f, ry, 0.0f);
-        glNormal3f(cs[i], 0.35f, sn[i]);
-        glVertex3f(cs[i] * rx, 0.0f, sn[i] * rz);
-        glNormal3f(cs[i + 1], 0.35f, sn[i + 1]);
-        glVertex3f(cs[i + 1] * rx, 0.0f, sn[i + 1] * rz);
+        T3DBuildVert v0 = { 0.0f, ry, 0.0f,  0.0f, 1.0f, 0.0f,  0, 0,  cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { cs[i] * rx, 0.0f, sn[i] * rz,  cs[i], 0.35f, sn[i],  0, 0,  cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { cs[i + 1] * rx, 0.0f, sn[i + 1] * rz,  cs[i + 1], 0.35f, sn[i + 1],  0, 0,  cr, cg, cb, 1.0f };
+        t3d_dyn_tri_vc(&v0, &v1, &v2);
     }
-    // Bottom pyramid (6 tris, CCW from below)
     for (int i = 0; i < 6; i++) {
-        glNormal3f(0.0f, -1.0f, 0.0f);
-        glVertex3f(0.0f, -ry, 0.0f);
-        glNormal3f(cs[i + 1], -0.35f, sn[i + 1]);
-        glVertex3f(cs[i + 1] * rx, 0.0f, sn[i + 1] * rz);
-        glNormal3f(cs[i], -0.35f, sn[i]);
-        glVertex3f(cs[i] * rx, 0.0f, sn[i] * rz);
+        T3DBuildVert v0 = { 0.0f, -ry, 0.0f,  0.0f, -1.0f, 0.0f,  0, 0,  cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { cs[i + 1] * rx, 0.0f, sn[i + 1] * rz,  cs[i + 1], -0.35f, sn[i + 1],  0, 0,  cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { cs[i] * rx, 0.0f, sn[i] * rz,  cs[i], -0.35f, sn[i],  0, 0,  cr, cg, cb, 1.0f };
+        t3d_dyn_tri_vc(&v0, &v1, &v2);
     }
-    glEnd();
+    t3d_dyn_end_tris();
 }
 
-// Helper: low-poly 6-sided beveled barrel ellipsoid (24 tris, outward CCW)
-static void draw_ellipsoid(float rx, float ry, float rz) {
+static void emit_ellipsoid_at(T3DMeshBuilder *b,
+                              float ox, float oy, float oz,
+                              float rx, float ry, float rz,
+                              float cr, float cg, float cb) {
     static const float cs[7] = { 1.0f,  0.5f, -0.5f, -1.0f, -0.5f,  0.5f, 1.0f };
     static const float sn[7] = { 0.0f, -0.866f,-0.866f, 0.0f,  0.866f, 0.866f, 0.0f };
     static const float lat_y[4] = { -1.0f, -0.45f, 0.45f, 1.0f };
     static const float lat_r[4] = {  0.0f,  0.89f, 0.89f, 0.0f };
 
-    glBegin(GL_QUADS);
     for (int i = 0; i < 6; i++) {
         float c0 = cs[i], s0 = sn[i];
         float c1 = cs[i + 1], s1 = sn[i + 1];
-
-        glNormal3f(c0 * 0.89f, -0.45f, s0 * 0.89f);
-        glVertex3f(c0 * lat_r[1] * rx, lat_y[1] * ry, s0 * lat_r[1] * rz);
-
-        glNormal3f(c1 * 0.89f, -0.45f, s1 * 0.89f);
-        glVertex3f(c1 * lat_r[1] * rx, lat_y[1] * ry, s1 * lat_r[1] * rz);
-
-        glNormal3f(c1 * 0.89f,  0.45f, s1 * 0.89f);
-        glVertex3f(c1 * lat_r[2] * rx, lat_y[2] * ry, s1 * lat_r[2] * rz);
-
-        glNormal3f(c0 * 0.89f,  0.45f, s0 * 0.89f);
-        glVertex3f(c0 * lat_r[2] * rx, lat_y[2] * ry, s0 * lat_r[2] * rz);
+        T3DBuildVert v0 = { ox + c0 * lat_r[1] * rx, oy + lat_y[1] * ry, oz + s0 * lat_r[1] * rz, c0 * 0.89f, -0.45f, s0 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { ox + c1 * lat_r[1] * rx, oy + lat_y[1] * ry, oz + s1 * lat_r[1] * rz, c1 * 0.89f, -0.45f, s1 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { ox + c1 * lat_r[2] * rx, oy + lat_y[2] * ry, oz + s1 * lat_r[2] * rz, c1 * 0.89f,  0.45f, s1 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v3 = { ox + c0 * lat_r[2] * rx, oy + lat_y[2] * ry, oz + s0 * lat_r[2] * rz, c0 * 0.89f,  0.45f, s0 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        t3d_mb_push_quad_vc(b, &v0, &v1, &v2, &v3);
     }
-    glEnd();
 
-    glBegin(GL_TRIANGLES);
     for (int i = 0; i < 6; i++) {
         float c0 = cs[i], s0 = sn[i];
         float c1 = cs[i + 1], s1 = sn[i + 1];
-        glNormal3f(0.0f, 1.0f, 0.0f);
-        glVertex3f(0.0f, ry, 0.0f);
-        glNormal3f(c0 * 0.89f, 0.45f, s0 * 0.89f);
-        glVertex3f(c0 * lat_r[2] * rx, lat_y[2] * ry, s0 * lat_r[2] * rz);
-        glNormal3f(c1 * 0.89f, 0.45f, s1 * 0.89f);
-        glVertex3f(c1 * lat_r[2] * rx, lat_y[2] * ry, s1 * lat_r[2] * rz);
+        T3DBuildVert v0 = { ox, oy + ry, oz, 0.0f, 1.0f, 0.0f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { ox + c0 * lat_r[2] * rx, oy + lat_y[2] * ry, oz + s0 * lat_r[2] * rz, c0 * 0.89f, 0.45f, s0 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { ox + c1 * lat_r[2] * rx, oy + lat_y[2] * ry, oz + s1 * lat_r[2] * rz, c1 * 0.89f, 0.45f, s1 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        t3d_mb_push_tri_vc(b, &v0, &v1, &v2);
     }
     for (int i = 0; i < 6; i++) {
         float c0 = cs[i], s0 = sn[i];
         float c1 = cs[i + 1], s1 = sn[i + 1];
-        glNormal3f(0.0f, -1.0f, 0.0f);
-        glVertex3f(0.0f, -ry, 0.0f);
-        glNormal3f(c1 * 0.89f, -0.45f, s1 * 0.89f);
-        glVertex3f(c1 * lat_r[1] * rx, lat_y[1] * ry, s1 * lat_r[1] * rz);
-        glNormal3f(c0 * 0.89f, -0.45f, s0 * 0.89f);
-        glVertex3f(c0 * lat_r[1] * rx, lat_y[1] * ry, s0 * lat_r[1] * rz);
+        T3DBuildVert v0 = { ox, oy - ry, oz, 0.0f, -1.0f, 0.0f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v1 = { ox + c1 * lat_r[1] * rx, oy + lat_y[1] * ry, oz + s1 * lat_r[1] * rz, c1 * 0.89f, -0.45f, s1 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        T3DBuildVert v2 = { ox + c0 * lat_r[1] * rx, oy + lat_y[1] * ry, oz + s0 * lat_r[1] * rz, c0 * 0.89f, -0.45f, s0 * 0.89f, 0, 0, cr, cg, cb, 1.0f };
+        t3d_mb_push_tri_vc(b, &v0, &v1, &v2);
     }
-    glEnd();
+}
+
+static void emit_santa_hat(T3DMeshBuilder *b, float rx, float h) {
+    static const float hcs[7] = { 1.0f, 0.5f, -0.5f, -1.0f, -0.5f, 0.5f, 1.0f };
+    static const float hsn[7] = { 0.0f,-0.866f,-0.866f, 0.0f, 0.866f, 0.866f, 0.0f };
+    float tip_z = -rx * 0.35f;
+
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, rx * 1.08f, rx * 0.28f, rx * 1.08f, 0.96f, 0.96f, 0.98f);
+
+    t3d_mb_set_color(b, 0.88f, 0.10f, 0.14f, 1.0f);
+    for (int i = 0; i < 6; i++) {
+        t3d_mb_set_normal(b, hcs[i], 0.45f, hsn[i]);
+        t3d_mb_push_tri(b,
+                        0.0f, h, tip_z,
+                        hcs[i] * rx * 0.92f, rx * 0.14f, hsn[i] * rx * 0.92f,
+                        hcs[i + 1] * rx * 0.92f, rx * 0.14f, hsn[i + 1] * rx * 0.92f);
+    }
+
+    emit_gem_tris_at(b, 0.0f, h, tip_z, rx * 0.32f, rx * 0.32f, rx * 0.32f, 0.98f, 0.98f, 0.98f);
+}
+
+// ---------------------------------------------------------
+// Pre-compiled Tiny3D Meshes for Visitors, Hats & Easter Eggs
+// ---------------------------------------------------------
+static bool s_lists_ready = false;
+static T3DMesh m_santa_hat_frog, m_wizard_hat_frog, m_santa_hat_cat, m_spring_flower_cat, m_summer_shades_cat;
+static T3DMesh m_frog_body_head, m_frog_arm, m_frog_wand_arm, m_frog_wand_star;
+static T3DMesh m_frog_leg_seated, m_frog_leg_air;
+static T3DMesh m_turkey_leg, m_turkey_body, m_turkey_wing, m_turkey_tail, m_turkey_head;
+static T3DMesh m_roasted_turkey;
+static T3DMesh m_cat_nap, m_cat_front_leg, m_cat_back_leg, m_cat_haunch;
+static T3DMesh m_cat_torso, m_cat_tail_lower, m_cat_tail_upper, m_cat_head, m_cat_ears;
+static T3DMesh m_penguin_foot, m_penguin_body, m_penguin_flipper, m_penguin_scarf_tail, m_penguin_head;
+static T3DMesh m_mini_snowman;
+
+void turkey_init_lists(void) {
+    if (s_lists_ready) return;
+    s_lists_ready = true;
+
+    T3DMeshBuilder *b;
+
+    // 1. Shared Hats
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_santa_hat(b, 0.115f, 0.21f);
+    m_santa_hat_frog = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    {
+        static const float hcs[7] = { 1.0f, 0.5f, -0.5f, -1.0f, -0.5f, 0.5f, 1.0f };
+        static const float hsn[7] = { 0.0f,-0.866f,-0.866f, 0.0f, 0.866f, 0.866f, 0.0f };
+        emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.125f, 0.018f, 0.125f, 0.16f, 0.24f, 0.82f);
+        emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.078f, 0.024f, 0.078f, 1.00f, 0.84f, 0.18f);
+        t3d_mb_set_color(b, 0.18f, 0.28f, 0.88f, 1.0f);
+        for (int i = 0; i < 6; i++) {
+            t3d_mb_set_normal(b, hcs[i], 0.4f, hsn[i]);
+            t3d_mb_push_tri(b,
+                            0.0f, 0.21f, -0.02f,
+                            hcs[i] * 0.072f, 0.01f, hsn[i] * 0.072f,
+                            hcs[i + 1] * 0.072f, 0.01f, hsn[i + 1] * 0.072f);
+        }
+    }
+    m_wizard_hat_frog = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_santa_hat(b, 0.058f, 0.130f);
+    m_santa_hat_cat = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    {
+        float fx = 0.062f, fy = 0.070f, fz = 0.022f;
+        t3d_mb_set_color(b, 0.98f, 0.64f, 0.80f, 1.0f);
+        for (int i = 0; i < 5; i++) {
+            float a = (float)i * 1.256637f;
+            float px = fx + cosf(a) * 0.020f;
+            float py = fy + sinf(a) * 0.020f;
+            emit_cbox(b, px - 0.011f, py - 0.011f, fz - 0.008f, px + 0.011f, py + 0.011f, fz + 0.010f);
+        }
+        t3d_mb_set_color(b, 1.00f, 0.86f, 0.24f, 1.0f);
+        emit_cbox(b, fx - 0.010f, fy - 0.010f, fz - 0.006f, fx + 0.010f, fy + 0.010f, fz + 0.014f);
+    }
+    m_spring_flower_cat = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    {
+        t3d_mb_set_color(b, 0.08f, 0.09f, 0.14f, 1.0f);
+        emit_cbox(b, -0.066f, -0.004f, 0.086f, -0.018f, 0.032f, 0.098f);
+        emit_cbox(b,  0.018f, -0.004f, 0.086f,  0.066f, 0.032f, 0.098f);
+        emit_cbox(b, -0.020f,  0.018f, 0.088f,  0.020f, 0.028f, 0.098f);
+        emit_cbox(b, -0.072f,  0.016f, 0.020f, -0.062f, 0.026f, 0.090f);
+        emit_cbox(b,  0.062f,  0.016f, 0.020f,  0.072f, 0.026f, 0.090f);
+        t3d_mb_set_color(b, 0.72f, 0.84f, 0.96f, 1.0f);
+        emit_cbox(b, -0.056f,  0.016f, 0.096f, -0.042f, 0.026f, 0.100f);
+        emit_cbox(b,  0.028f,  0.016f, 0.096f,  0.042f, 0.026f, 0.100f);
+    }
+    m_summer_shades_cat = t3d_mb_end(b);
+
+    // 2. Frog parts
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.0f, 0.0f, 0.148f, 0.105f, 0.175f, 0.24f, 0.76f, 0.24f);
+    emit_gem_tris_at(b, 0.0f, -0.044f, 0.032f, 0.118f, 0.065f, 0.132f, 0.88f, 0.90f, 0.56f);
+    emit_gem_tris_at(b, 0.0f,  0.025f, 0.132f, 0.122f, 0.070f, 0.100f, 0.26f, 0.80f, 0.26f);
+    t3d_mb_set_color(b, 0.12f, 0.44f, 0.14f, 1.0f);
+    emit_cbox(b, -0.085f, 0.078f, -0.065f, -0.025f, 0.104f,  0.005f);
+    emit_cbox(b,  0.030f, 0.076f, -0.085f,  0.085f, 0.100f, -0.020f);
+    t3d_mb_set_color(b, 0.10f, 0.30f, 0.10f, 1.0f);
+    emit_cbox(b, -0.092f, 0.011f,  0.200f,  0.092f, 0.023f,  0.230f);
+    for (int side = -1; side <= 1; side += 2) {
+        float ex = side * 0.068f;
+        t3d_mb_set_color(b, 0.24f, 0.78f, 0.24f, 1.0f);
+        emit_cbox(b, ex - 0.042f, 0.061f, 0.102f,  ex + 0.042f, 0.139f, 0.178f);
+        t3d_mb_set_color(b, 0.98f, 0.96f, 0.74f, 1.0f);
+        emit_cbox(b, ex - 0.032f, 0.071f, 0.170f,  ex + 0.032f, 0.129f, 0.194f);
+        t3d_mb_set_color(b, 0.05f, 0.05f, 0.07f, 1.0f);
+        emit_cbox(b, ex - 0.015f, 0.085f, 0.190f,  ex + 0.015f, 0.115f, 0.204f);
+    }
+    m_frog_body_head = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.22f, 0.72f, 0.22f, 1.0f);
+    emit_cbox(b, -0.020f, -0.105f, -0.020f,  0.020f,  0.010f, 0.020f);
+    t3d_mb_set_color(b, 0.32f, 0.82f, 0.26f, 1.0f);
+    emit_cbox(b, -0.034f, -0.112f, -0.016f,  0.034f, -0.092f, 0.046f);
+    m_frog_arm = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.22f, 0.72f, 0.22f, 1.0f);
+    emit_cbox(b, -0.020f, -0.105f, -0.020f,  0.020f,  0.010f, 0.020f);
+    t3d_mb_set_color(b, 0.32f, 0.82f, 0.26f, 1.0f);
+    emit_cbox(b, -0.030f, -0.112f, -0.016f,  0.030f, -0.092f, 0.040f);
+    t3d_mb_set_color(b, 0.42f, 0.24f, 0.10f, 1.0f);
+    emit_cbox(b, -0.012f, -0.340f, -0.012f,  0.012f, -0.095f, 0.012f);
+    m_frog_wand_arm = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_lit(b, false);
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.056f, 0.056f, 0.056f, 1.00f, 0.94f, 0.36f);
+    m_frog_wand_star = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.058f, 0.068f, 0.098f, 0.20f, 0.68f, 0.20f);
+    t3d_mb_set_color(b, 0.34f, 0.84f, 0.26f, 1.0f);
+    emit_cbox(b, -0.048f, -0.082f, -0.050f,  0.048f, -0.058f, 0.075f);
+    m_frog_leg_seated = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.048f, 0.048f, 0.095f, 0.20f, 0.68f, 0.20f);
+    t3d_mb_set_color(b, 0.20f, 0.68f, 0.20f, 1.0f);
+    emit_cbox(b, -0.022f, -0.052f, -0.220f,  0.022f, -0.008f, -0.085f);
+    t3d_mb_set_color(b, 0.34f, 0.84f, 0.26f, 1.0f);
+    emit_cbox(b, -0.048f, -0.044f, -0.280f,  0.048f, -0.016f, -0.205f);
+    m_frog_leg_air = t3d_mb_end(b);
+
+    // 3. Turkey parts
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.96f, 0.60f, 0.14f, 1.0f);
+    emit_cbox(b, -0.018f, -0.175f, -0.018f,  0.018f,  0.000f, 0.018f);
+    emit_cbox(b, -0.038f, -0.180f, -0.025f,  0.038f, -0.158f, 0.070f);
+    m_turkey_leg = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.0f, 0.0f, 0.165f, 0.150f, 0.200f, 0.64f, 0.34f, 0.15f);
+    emit_gem_tris_at(b, 0.0f, -0.01f, 0.125f, 0.112f, 0.098f, 0.098f, 0.78f, 0.46f, 0.20f);
+    m_turkey_body = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.48f, 0.24f, 0.10f, 1.0f);
+    emit_cbox(b, -0.028f, -0.098f, -0.125f,  0.028f, 0.045f, 0.098f);
+    m_turkey_wing = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_cull(b, false);
+    t3d_mb_set_normal(b, 0.0f, 0.25f, 0.96f);
+    {
+        const float deg2rad = 0.0174532925f;
+        for (int f = -3; f <= 3; f++) {
+            float ang = (float)f * 21.0f * deg2rad;
+            float c = cosf(ang), s = sinf(ang);
+            float r, g, b_c;
+            int m = (f + 3) % 3;
+            if (m == 0)      { r = 0.72f; g = 0.30f; b_c = 0.09f; }
+            else if (m == 1) { r = 0.94f; g = 0.48f; b_c = 0.10f; }
+            else             { r = 0.86f; g = 0.64f; b_c = 0.16f; }
+            float fh = (0.34f - fabsf((float)f) * 0.018f) * 1.08f;
+            float fw = 0.058f * 1.08f;
+            float fz = -0.005f * fabsf((float)f);
+            float y1 = fh * 0.80f;
+
+            t3d_mb_set_color(b, r, g, b_c, 1.0f);
+            t3d_mb_push_quad(b,
+                             (-fw * 0.42f) * c, (-fw * 0.42f) * s, fz,
+                             ( fw * 0.42f) * c, ( fw * 0.42f) * s, fz,
+                              fw * c - y1 * s,   fw * s + y1 * c,  fz,
+                             -fw * c - y1 * s,  -fw * s + y1 * c,  fz);
+
+            t3d_mb_set_color(b, 0.98f, 0.90f, 0.68f, 1.0f);
+            t3d_mb_push_tri(b,
+                            -fw * c - y1 * s, -fw * s + y1 * c, fz,
+                             fw * c - y1 * s,  fw * s + y1 * c, fz,
+                            -fh * s,           fh * c,          fz);
+        }
+    }
+    m_turkey_tail = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_gem_tris_at(b, 0.0f, 0.175f, 0.015f, 0.064f, 0.060f, 0.070f, 0.90f, 0.26f, 0.22f);
+    t3d_mb_set_color(b, 1.00f, 0.82f, 0.18f, 1.0f);
+    t3d_mb_set_normal(b,  0.0f,  0.6f, 0.8f);
+    t3d_mb_push_tri(b, -0.026f, 0.187f, 0.073f,  0.026f, 0.187f, 0.073f, 0.0f, 0.167f, 0.150f);
+    t3d_mb_set_normal(b,  0.0f, -0.6f, 0.8f);
+    t3d_mb_push_tri(b,  0.026f, 0.155f, 0.073f, -0.026f, 0.155f, 0.073f, 0.0f, 0.167f, 0.150f);
+    t3d_mb_set_normal(b, -0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b, -0.026f, 0.155f, 0.073f, -0.026f, 0.187f, 0.073f, 0.0f, 0.167f, 0.150f);
+    t3d_mb_set_normal(b,  0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b,  0.026f, 0.187f, 0.073f,  0.026f, 0.155f, 0.073f, 0.0f, 0.167f, 0.150f);
+
+    t3d_mb_set_color(b, 0.84f, 0.28f, 0.20f, 1.0f);
+    emit_cbox(b, -0.038f, -0.025f, -0.036f,  0.038f, 0.145f, 0.036f);
+    t3d_mb_set_color(b, 1.00f, 0.14f, 0.14f, 1.0f);
+    emit_cbox(b, -0.020f,  0.075f,  0.045f,  0.020f, 0.160f, 0.087f);
+    emit_cbox(b, -0.014f,  0.147f,  0.083f,  0.014f, 0.197f, 0.113f);
+    t3d_mb_set_color(b, 0.06f, 0.05f, 0.05f, 1.0f);
+    emit_cbox(b, -0.066f,  0.181f,  0.033f, -0.052f, 0.203f, 0.057f);
+    emit_cbox(b,  0.052f,  0.181f,  0.033f,  0.066f, 0.203f, 0.057f);
+    m_turkey_head = t3d_mb_end(b);
+
+    // 4. Roasted Turkey Easter Egg
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.155f, 0.0f, 0.195f, 0.135f, 0.155f, 0.86f, 0.44f, 0.12f);
+    emit_gem_tris_at(b,  0.0f,  0.022f, 0.0f, 0.32f,  0.024f, 0.25f,  0.84f, 0.86f, 0.90f);
+    emit_gem_tris_at(b, -0.02f, 0.220f, 0.0f, 0.145f, 0.075f, 0.115f, 0.95f, 0.56f, 0.16f);
+    t3d_mb_set_color(b, 0.95f, 0.96f, 0.98f, 1.0f);
+    emit_cbox(b, -0.22f, 0.022f, -0.16f,  0.22f, 0.036f, 0.16f);
+    t3d_mb_set_color(b, 0.18f, 0.68f, 0.22f, 1.0f);
+    emit_cbox(b, -0.25f, 0.034f,  0.07f, -0.18f, 0.068f,  0.14f);
+    emit_cbox(b,  0.18f, 0.034f,  0.06f,  0.25f, 0.068f,  0.13f);
+    emit_cbox(b, -0.24f, 0.034f, -0.13f, -0.17f, 0.068f, -0.06f);
+    emit_cbox(b,  0.17f, 0.034f, -0.13f,  0.24f, 0.068f, -0.06f);
+    t3d_mb_set_color(b, 0.88f, 0.12f, 0.16f, 1.0f);
+    emit_cbox(b, -0.22f, 0.044f,  0.02f, -0.18f, 0.078f,  0.06f);
+    emit_cbox(b,  0.19f, 0.044f, -0.04f,  0.23f, 0.078f,  0.00f);
+    t3d_mb_set_color(b, 0.76f, 0.36f, 0.10f, 1.0f);
+    emit_cbox(b, -0.14f, 0.100f,  0.125f,  0.08f, 0.185f,  0.175f);
+    emit_cbox(b, -0.14f, 0.100f, -0.175f,  0.08f, 0.185f, -0.125f);
+    for (int side = -1; side <= 1; side += 2) {
+        float tz = (float)side * 0.105f;
+        float dx = (float)side * -24.0f;
+        emit_gem_tris_xform(b, 0.0f, 0.0f, 0.0f, 0.062f, 0.095f, 0.062f,
+                            -34.0f, dx, 0.105f, 0.170f, tz, 0.82f, 0.40f, 0.11f);
+        emit_gem_tris_xform(b, 0.0f, 0.175f, 0.0f, 0.052f, 0.044f, 0.052f,
+                            -34.0f, dx, 0.105f, 0.170f, tz, 0.98f, 0.98f, 0.98f);
+        emit_cbox_xform(b, -0.018f, 0.070f, -0.018f, 0.018f, 0.165f, 0.018f,
+                        -34.0f, dx, 0.105f, 0.170f, tz, 0.96f, 0.92f, 0.82f);
+    }
+    m_roasted_turkey = t3d_mb_end(b);
+
+    // 5. Cat parts
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.095f, 0.0f, 0.165f, 0.092f, 0.185f, 0.92f, 0.52f, 0.16f);
+    t3d_mb_set_color(b, 0.70f, 0.34f, 0.09f, 1.0f);
+    emit_cbox(b, -0.115f, 0.160f, -0.090f,  0.115f, 0.183f, -0.055f);
+    emit_cbox(b, -0.125f, 0.167f, -0.015f,  0.125f, 0.190f,  0.020f);
+    emit_cbox(b, -0.110f, 0.159f,  0.055f,  0.110f, 0.181f,  0.088f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.085f, 0.003f,  0.130f, -0.025f, 0.039f,  0.195f);
+    emit_cbox(b,  0.025f, 0.003f,  0.130f,  0.085f, 0.039f,  0.195f);
+    t3d_mb_set_color(b, 0.88f, 0.48f, 0.14f, 1.0f);
+    emit_cbox(b,  0.130f, 0.013f, -0.140f,  0.185f, 0.059f,  0.100f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b,  0.110f, 0.013f,  0.090f,  0.175f, 0.059f,  0.155f);
+
+    emit_gem_tris_xform(b, 0.0f, 0.0f, 0.0f, 0.092f, 0.078f, 0.088f,
+                        0.0f, 14.0f, 0.0f, 0.115f, 0.165f, 0.94f, 0.55f, 0.18f);
+    emit_cbox_xform(b, -0.042f, -0.044f, 0.052f,  0.042f, -0.008f, 0.095f,
+                    0.0f, 14.0f, 0.0f, 0.115f, 0.165f, 0.96f, 0.93f, 0.86f);
+    emit_cbox_xform(b, -0.015f, -0.014f, 0.088f,  0.015f,  0.006f, 0.104f,
+                    0.0f, 14.0f, 0.0f, 0.115f, 0.165f, 0.96f, 0.56f, 0.62f);
+    emit_cbox_xform(b, -0.058f,  0.004f, 0.066f, -0.020f,  0.015f, 0.084f,
+                    0.0f, 14.0f, 0.0f, 0.115f, 0.165f, 0.18f, 0.10f, 0.06f);
+    emit_cbox_xform(b,  0.020f,  0.004f, 0.066f,  0.058f,  0.015f, 0.084f,
+                    0.0f, 14.0f, 0.0f, 0.115f, 0.165f, 0.18f, 0.10f, 0.06f);
+
+    t3d_mb_set_cull(b, false);
+    {
+        const float rad = 0.0174532925f;
+        float cx = cosf(14.0f * rad), sx = sinf(14.0f * rad);
+        float wnx, wny, wnz;
+        rotate_zx(0.0f, 0.4f, 0.9f, 1.0f, 0.0f, cx, sx, &wnx, &wny, &wnz);
+        t3d_mb_set_normal(b, wnx, wny, wnz);
+        t3d_mb_set_color(b, 0.90f, 0.48f, 0.14f, 1.0f);
+        for (int side = -1; side <= 1; side += 2) {
+            float ex = side * 0.052f;
+            float p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z;
+            rotate_zx(ex - 0.028f, 0.052f, 0.005f, 1.0f, 0.0f, cx, sx, &p0x, &p0y, &p0z);
+            rotate_zx(ex + 0.028f, 0.052f, 0.005f, 1.0f, 0.0f, cx, sx, &p1x, &p1y, &p1z);
+            rotate_zx(ex + side * 0.012f, 0.125f, 0.005f, 1.0f, 0.0f, cx, sx, &p2x, &p2y, &p2z);
+            t3d_mb_push_tri(b, p0x, p0y + 0.115f, p0z + 0.165f,
+                               p1x, p1y + 0.115f, p1z + 0.165f,
+                               p2x, p2y + 0.115f, p2z + 0.165f);
+        }
+    }
+    m_cat_nap = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.90f, 0.50f, 0.16f, 1.0f);
+    emit_cbox(b, -0.022f, -0.115f, -0.022f,  0.022f,  0.015f, 0.022f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.024f, -0.155f, -0.022f,  0.024f, -0.112f, 0.036f);
+    m_cat_front_leg = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.88f, 0.48f, 0.14f, 1.0f);
+    emit_cbox(b, -0.024f, -0.115f, -0.024f,  0.024f,  0.015f, 0.024f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.026f, -0.155f, -0.024f,  0.026f, -0.112f, 0.036f);
+    m_cat_back_leg = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.052f, 0.072f, 0.082f, 0.88f, 0.48f, 0.14f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.026f, -0.085f, -0.020f,  0.026f, -0.052f, 0.075f);
+    m_cat_haunch = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.0f, 0.0f, 0.105f, 0.092f, 0.205f, 0.92f, 0.52f, 0.16f);
+    emit_gem_tris_at(b, 0.0f, -0.015f, 0.145f, 0.078f, 0.074f, 0.072f, 0.96f, 0.94f, 0.88f);
+    t3d_mb_set_color(b, 0.68f, 0.32f, 0.08f, 1.0f);
+    emit_cbox(b, -0.078f, 0.060f, -0.105f,  0.078f, 0.088f, -0.070f);
+    emit_cbox(b, -0.084f, 0.068f, -0.020f,  0.084f, 0.096f,  0.015f);
+    emit_cbox(b, -0.076f, 0.060f,  0.065f,  0.076f, 0.088f,  0.098f);
+    m_cat_torso = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.90f, 0.50f, 0.15f, 1.0f);
+    emit_cbox(b, -0.020f, 0.0f, -0.020f,  0.020f, 0.150f, 0.020f);
+    m_cat_tail_lower = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.90f, 0.50f, 0.15f, 1.0f);
+    emit_cbox(b, -0.018f, 0.0f,   -0.018f,  0.018f, 0.105f, 0.018f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.020f, 0.100f, -0.020f,  0.020f, 0.148f, 0.020f);
+    m_cat_tail_upper = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_gem_tris_at(b, 0.0f, 0.0f, 0.0f, 0.094f, 0.084f, 0.090f, 0.94f, 0.55f, 0.18f);
+    t3d_mb_set_color(b, 0.96f, 0.94f, 0.88f, 1.0f);
+    emit_cbox(b, -0.044f, -0.044f, 0.052f,  0.044f, -0.008f, 0.098f);
+    t3d_mb_set_color(b, 0.96f, 0.52f, 0.60f, 1.0f);
+    emit_cbox(b, -0.016f, -0.014f, 0.092f,  0.016f,  0.008f, 0.108f);
+    for (int side = -1; side <= 1; side += 2) {
+        float ex = side * 0.042f;
+        t3d_mb_set_color(b, 0.32f, 0.86f, 0.34f, 1.0f);
+        emit_cbox(b, ex - 0.022f, -0.002f, 0.068f,  ex + 0.022f, 0.034f, 0.084f);
+        t3d_mb_set_color(b, 0.06f, 0.06f, 0.08f, 1.0f);
+        emit_cbox(b, ex - 0.009f,  0.002f, 0.080f,  ex + 0.009f, 0.030f, 0.090f);
+    }
+    m_cat_head = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_cull(b, false);
+    t3d_mb_set_normal(b, 0.0f, 0.3f, 0.95f);
+    for (int side = -1; side <= 1; side += 2) {
+        float ex = side * 0.054f;
+        t3d_mb_set_color(b, 0.90f, 0.48f, 0.14f, 1.0f);
+        t3d_mb_push_tri(b, ex - 0.032f, 0.056f, 0.002f, ex + 0.032f, 0.056f, 0.002f, ex + side * 0.014f, 0.140f, 0.004f);
+        t3d_mb_set_color(b, 0.96f, 0.62f, 0.66f, 1.0f);
+        t3d_mb_push_tri(b, ex - 0.017f, 0.064f, 0.012f, ex + 0.017f, 0.064f, 0.012f, ex + side * 0.008f, 0.118f, 0.012f);
+    }
+    m_cat_ears = t3d_mb_end(b);
+
+    // 6. Penguin parts
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.96f, 0.56f, 0.12f, 1.0f);
+    emit_cbox(b, -0.020f, -0.068f, -0.020f,  0.020f,  0.010f, 0.020f);
+    emit_cbox(b, -0.044f, -0.075f, -0.026f,  0.044f, -0.048f, 0.088f);
+    m_penguin_foot = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f,  0.0f,   0.0f,   0.152f, 0.172f, 0.142f, 0.15f, 0.22f, 0.42f);
+    emit_ellipsoid_at(b, 0.0f, -0.012f, 0.048f, 0.118f, 0.138f, 0.106f, 0.96f, 0.97f, 0.99f);
+    emit_gem_tris_at(b, 0.0f, 0.142f, 0.010f, 0.118f, 0.032f, 0.116f, 0.88f, 0.12f, 0.16f);
+    t3d_mb_set_color(b, 0.14f, 0.20f, 0.38f, 1.0f);
+    emit_cbox(b, -0.042f, -0.105f, -0.165f,  0.042f, -0.045f, -0.095f);
+    t3d_mb_set_color(b, 0.96f, 0.96f, 0.98f, 1.0f);
+    emit_cbox(b, -0.075f,  0.114f,  0.102f,  0.075f,  0.154f,  0.126f);
+    m_penguin_body = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.14f, 0.20f, 0.38f, 1.0f);
+    emit_cbox(b, -0.024f, -0.140f, -0.045f,  0.024f, 0.015f, 0.045f);
+    m_penguin_flipper = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    t3d_mb_set_color(b, 0.88f, 0.12f, 0.16f, 1.0f);
+    emit_cbox(b, -0.026f, -0.135f, -0.018f,  0.026f, 0.010f, 0.018f);
+    m_penguin_scarf_tail = t3d_mb_end(b);
+
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.0f, 0.0f, 0.116f, 0.102f, 0.112f, 0.15f, 0.22f, 0.42f);
+    t3d_mb_set_color(b, 0.96f, 0.97f, 0.99f, 1.0f);
+    emit_cbox(b, -0.088f, -0.062f, 0.056f, -0.018f,  0.020f, 0.104f);
+    emit_cbox(b,  0.018f, -0.062f, 0.056f,  0.088f,  0.020f, 0.104f);
+    emit_cbox(b, -0.055f, -0.068f, 0.064f,  0.055f, -0.018f, 0.108f);
+    for (int side = -1; side <= 1; side += 2) {
+        float ex = side * 0.048f;
+        t3d_mb_set_color(b, 0.05f, 0.05f, 0.07f, 1.0f);
+        emit_cbox(b, ex - 0.018f, 0.002f, 0.094f,  ex + 0.018f, 0.044f, 0.114f);
+        t3d_mb_set_color(b, 0.98f, 0.98f, 0.99f, 1.0f);
+        emit_cbox(b, ex - 0.007f, 0.024f, 0.108f,  ex + 0.007f, 0.038f, 0.118f);
+    }
+    t3d_mb_set_color(b, 0.98f, 0.68f, 0.12f, 1.0f);
+    t3d_mb_set_normal(b,  0.0f,  0.6f, 0.8f);
+    t3d_mb_push_tri(b, -0.042f,  0.002f, 0.092f,  0.042f,  0.002f, 0.092f, 0.0f, -0.016f, 0.182f);
+    t3d_mb_set_normal(b,  0.0f, -0.6f, 0.8f);
+    t3d_mb_push_tri(b,  0.042f, -0.034f, 0.092f, -0.042f, -0.034f, 0.092f, 0.0f, -0.016f, 0.182f);
+    t3d_mb_set_normal(b, -0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b, -0.042f, -0.034f, 0.092f, -0.042f,  0.002f, 0.092f, 0.0f, -0.016f, 0.182f);
+    t3d_mb_set_normal(b,  0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b,  0.042f,  0.002f, 0.092f,  0.042f, -0.034f, 0.092f, 0.0f, -0.016f, 0.182f);
+    m_penguin_head = t3d_mb_end(b);
+
+    // 7. Mini Snowman Easter Egg
+    b = t3d_mb_begin(T3D_PROP_SCALE);
+    emit_ellipsoid_at(b, 0.0f, 0.095f, 0.0f, 0.125f, 0.100f, 0.125f, 0.96f, 0.97f, 0.99f);
+    emit_ellipsoid_at(b, 0.0f, 0.245f, 0.0f, 0.095f, 0.080f, 0.095f, 0.96f, 0.97f, 0.99f);
+    emit_ellipsoid_at(b, 0.0f, 0.370f, 0.0f, 0.070f, 0.064f, 0.070f, 0.96f, 0.97f, 0.99f);
+    emit_gem_tris_at(b, 0.0f, 0.312f, 0.0f, 0.076f, 0.022f, 0.076f, 0.88f, 0.12f, 0.16f);
+    emit_gem_tris_at(b, 0.0f, 0.422f, 0.0f, 0.084f, 0.012f, 0.084f, 0.10f, 0.10f, 0.12f);
+    t3d_mb_set_color(b, 0.96f, 0.44f, 0.08f, 1.0f);
+    t3d_mb_set_normal(b,  0.0f,  0.6f, 0.8f);
+    t3d_mb_push_tri(b, -0.018f, 0.378f, 0.058f,  0.018f, 0.378f, 0.058f, 0.0f, 0.366f, 0.128f);
+    t3d_mb_set_normal(b,  0.0f, -0.6f, 0.8f);
+    t3d_mb_push_tri(b,  0.018f, 0.354f, 0.058f, -0.018f, 0.354f, 0.058f, 0.0f, 0.366f, 0.128f);
+    t3d_mb_set_normal(b, -0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b, -0.018f, 0.354f, 0.058f, -0.018f, 0.378f, 0.058f, 0.0f, 0.366f, 0.128f);
+    t3d_mb_set_normal(b,  0.8f,  0.0f, 0.6f);
+    t3d_mb_push_tri(b,  0.018f, 0.378f, 0.058f,  0.018f, 0.354f, 0.058f, 0.0f, 0.366f, 0.128f);
+
+    t3d_mb_set_color(b, 0.88f, 0.12f, 0.16f, 1.0f);
+    emit_cbox(b, 0.026f, 0.215f, 0.068f,  0.062f, 0.308f, 0.096f);
+    t3d_mb_set_color(b, 0.08f, 0.08f, 0.10f, 1.0f);
+    emit_cbox(b, -0.032f, 0.382f, 0.054f, -0.014f, 0.400f, 0.072f);
+    emit_cbox(b,  0.014f, 0.382f, 0.054f,  0.032f, 0.400f, 0.072f);
+    emit_cbox(b, -0.012f, 0.258f, 0.082f,  0.012f, 0.278f, 0.102f);
+    emit_cbox(b, -0.012f, 0.215f, 0.082f,  0.012f, 0.235f, 0.102f);
+    emit_cbox(b, -0.012f, 0.115f, 0.110f,  0.012f, 0.135f, 0.130f);
+    t3d_mb_set_color(b, 0.10f, 0.10f, 0.12f, 1.0f);
+    emit_cbox(b, -0.048f, 0.432f, -0.048f,  0.048f, 0.517f, 0.048f);
+    t3d_mb_set_color(b, 0.86f, 0.12f, 0.16f, 1.0f);
+    emit_cbox(b, -0.051f, 0.436f, -0.051f,  0.051f, 0.456f, 0.051f);
+    for (int side = -1; side <= 1; side += 2) {
+        emit_cbox_xform(b, -0.010f, 0.0f, -0.010f, 0.010f, 0.110f, 0.010f,
+                        (float)side * -42.0f, 0.0f,
+                        side * 0.086f, 0.255f, 0.0f, 0.38f, 0.22f, 0.10f);
+    }
+    m_mini_snowman = t3d_mb_end(b);
 }
 
 static void render_frog(const Turkey *tk) {
@@ -662,372 +1435,135 @@ static void render_frog(const Turkey *tk) {
     float breath = sinf(tk->walk_phase) * 0.008f;
     float throat = 0.062f + 0.058f * tk->tail_flare + breath;
 
-    glPushMatrix();
-    glTranslatef(tk->x, tk->y + tk->hop_y, tk->z);
-    glRotatef(tk->yaw, 0.0f, 1.0f, 0.0f);
+    t3d_xf_reset();
+    t3d_xf_translate(tk->x, tk->y + tk->hop_y, tk->z);
+    t3d_xf_rotate_y(tk->yaw);
+    t3d_xf_translate(0.0f, 0.125f + crouch, 0.0f);
+    t3d_xf_rotate_x(pitch);
 
-    // ---------------------------------------------------------
-    // 1. Plump N64 Low-Poly Frog Body, Belly & Snout (~120 tris total!)
-    // ---------------------------------------------------------
-    glPushMatrix();
-    glTranslatef(0.0f, 0.125f + crouch, 0.0f);
-    glRotatef(pitch, 1.0f, 0.0f, 0.0f);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_frog_body_head);
 
-    // Emerald green plump torso
-    glColor3f(0.24f, 0.76f, 0.24f);
-    draw_ellipsoid(0.148f, 0.105f, 0.175f);
+    // Inflatable cream throat sac
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, -0.027f - 0.025f * tk->tail_flare, 0.150f);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    draw_dyn_gem(throat * 1.15f, throat * 0.92f, throat * 1.05f, 0.94f, 0.92f, 0.62f);
+    t3d_xf_pop();
 
-    // Cream-yellow belly
-    glPushMatrix();
-    glTranslatef(0.0f, -0.044f, 0.032f);
-    glColor3f(0.88f, 0.90f, 0.56f);
-    draw_gem(0.118f, 0.065f, 0.132f);
-    glPopMatrix();
-
-    // Cute darker forest-green back spots
-    glColor3f(0.12f, 0.44f, 0.14f);
-    draw_cbox(-0.085f, 0.078f, -0.065f, -0.025f, 0.104f,  0.005f);
-    draw_cbox( 0.030f, 0.076f, -0.085f,  0.085f, 0.100f, -0.020f);
-
-    // Wide smiling snout & inflatable throat sac
-    glPushMatrix();
-    glTranslatef(0.0f, 0.025f, 0.132f);
-    glColor3f(0.26f, 0.80f, 0.26f);
-    draw_gem(0.122f, 0.070f, 0.100f);
-
-    // Wide frog smile stripe
-    glColor3f(0.10f, 0.30f, 0.10f);
-    draw_cbox(-0.092f, -0.014f, 0.068f,  0.092f, -0.002f, 0.098f);
-
-    // Inflatable cream throat sac (balloons out on RIBBIT!)
-    glPushMatrix();
-    glTranslatef(0.0f, -0.052f - 0.025f * tk->tail_flare, 0.018f);
-    glColor3f(0.94f, 0.92f, 0.62f);
-    draw_gem(throat * 1.15f, throat * 0.92f, throat * 1.05f);
-    glPopMatrix();
-
-    // Iconic N64 chunky googly eyes perched on top of head
-    for (int side = -1; side <= 1; side += 2) {
-        float ex = side * 0.068f;
-        glColor3f(0.24f, 0.78f, 0.24f);
-        draw_cbox(ex - 0.042f, 0.036f, -0.030f,  ex + 0.042f, 0.114f, 0.046f);
-        glColor3f(0.98f, 0.96f, 0.74f);
-        draw_cbox(ex - 0.032f, 0.046f,  0.038f,  ex + 0.032f, 0.104f, 0.062f);
-        glColor3f(0.05f, 0.05f, 0.07f);
-        draw_cbox(ex - 0.015f, 0.060f,  0.058f,  ex + 0.015f, 0.090f, 0.072f);
-    }
-
-    // Tiny Blue Pointed Wizard Hat while casting magic!
+    // Pointed Hat while casting magic
     if (casting) {
-        glPushMatrix();
-        glTranslatef(0.0f, 0.105f, -0.045f);
-        glRotatef(-12.0f, 1.0f, 0.0f, 0.0f);
-        // Wide royal-blue brim
-        glColor3f(0.16f, 0.24f, 0.82f);
-        draw_gem(0.125f, 0.018f, 0.125f);
-        // Gold ribbon band
-        glColor3f(1.00f, 0.84f, 0.18f);
-        draw_gem(0.078f, 0.024f, 0.078f);
-        // Pointed wizard cone!
-        glColor3f(0.18f, 0.28f, 0.88f);
-        glBegin(GL_TRIANGLES);
-        static const float hcs[7] = { 1.0f, 0.5f, -0.5f, -1.0f, -0.5f, 0.5f, 1.0f };
-        static const float hsn[7] = { 0.0f,-0.866f,-0.866f, 0.0f, 0.866f, 0.866f, 0.0f };
-        for (int i = 0; i < 6; i++) {
-            glNormal3f(hcs[i], 0.4f, hsn[i]);
-            glVertex3f(0.0f, 0.21f, -0.02f);
-            glVertex3f(hcs[i] * 0.072f, 0.01f, hsn[i] * 0.072f);
-            glVertex3f(hcs[i + 1] * 0.072f, 0.01f, hsn[i + 1] * 0.072f);
-        }
-        glEnd();
-        glPopMatrix();
+        t3d_xf_push();
+        t3d_xf_translate(0.0f, 0.130f, 0.087f);
+        t3d_xf_rotate_x(-12.0f);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw((tk->season == SEASON_CHRISTMAS) ? &m_santa_hat_frog : &m_wizard_hat_frog);
+        t3d_xf_pop();
     }
-    glPopMatrix(); // head
 
-    // ---------------------------------------------------------
-    // 2. Front Arms + Glowing Magic Wand when casting!
-    // ---------------------------------------------------------
+    // Front Arms + Glowing Magic Wand when casting
     for (int side = -1; side <= 1; side += 2) {
-        glPushMatrix();
-        glTranslatef(side * 0.115f, -0.020f, 0.110f);
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.115f, -0.020f, 0.110f);
         if (casting && side == 1) {
-            // Raise right arm high & wave the magic wand!
             float wave_x = -115.0f + 26.0f * sinf(tk->cast_elapsed * 14.0f);
             float wave_z =  20.0f * cosf(tk->cast_elapsed * 14.0f);
-            glRotatef(wave_x, 1.0f, 0.0f, 0.0f);
-            glRotatef(wave_z, 0.0f, 0.0f, 1.0f);
-            glColor3f(0.22f, 0.72f, 0.22f);
-            draw_cbox(-0.020f, -0.105f, -0.020f,  0.020f, 0.010f, 0.020f);
-            glColor3f(0.32f, 0.82f, 0.26f);
-            draw_cbox(-0.030f, -0.112f, -0.016f,  0.030f, -0.092f, 0.040f);
+            t3d_xf_rotate_x(wave_x);
+            t3d_xf_rotate_z(wave_z);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_frog_wand_arm);
 
-            // Wooden Magic Wand extending out of the frog's hand!
-            glColor3f(0.42f, 0.24f, 0.10f);
-            draw_cbox(-0.012f, -0.340f, -0.012f,  0.012f, -0.095f, 0.012f);
-
-            // Bright Glowing Golden Star Tip on the wand!
-            glDisable(GL_LIGHTING);
-            glColor3f(1.00f, 0.94f, 0.36f);
-            glPushMatrix();
-            glTranslatef(0.0f, -0.355f, 0.0f);
-            glRotatef(tk->cast_elapsed * 260.0f, 0.0f, 1.0f, 0.0f);
-            draw_gem(0.056f, 0.056f, 0.056f);
-            glPopMatrix();
-            glEnable(GL_LIGHTING);
+            t3d_xf_translate(0.0f, -0.355f, 0.0f);
+            t3d_xf_rotate_y(tk->cast_elapsed * 260.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_frog_wand_star);
         } else {
-            glRotatef(in_air ? -28.0f : 12.0f, 1.0f, 0.0f, 0.0f);
-            glColor3f(0.22f, 0.72f, 0.22f);
-            draw_cbox(-0.020f, -0.105f, -0.020f,  0.020f, 0.010f, 0.020f);
-            glColor3f(0.32f, 0.82f, 0.26f);
-            draw_cbox(-0.034f, -0.112f, -0.016f,  0.034f, -0.092f, 0.046f);
+            t3d_xf_rotate_x(in_air ? -28.0f : 12.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_frog_arm);
         }
-        glPopMatrix();
+        t3d_xf_pop();
     }
 
-    // ---------------------------------------------------------
-    // 3. Springy Hind Legs (folded when seated, kicked back mid-hop!)
-    // ---------------------------------------------------------
+    // Hind Legs
     for (int side = -1; side <= 1; side += 2) {
-        glPushMatrix();
-        glTranslatef(side * 0.135f, -0.035f, -0.075f);
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.135f, -0.035f, -0.075f);
         if (in_air) {
-            glRotatef(52.0f, 1.0f, 0.0f, 0.0f);
-            glColor3f(0.20f, 0.68f, 0.20f);
-            draw_gem(0.048f, 0.048f, 0.095f);
-            glTranslatef(0.0f, -0.030f, -0.125f);
-            draw_cbox(-0.022f, -0.022f, -0.095f,  0.022f, 0.022f, 0.040f);
-            glColor3f(0.34f, 0.84f, 0.26f);
-            draw_cbox(-0.048f, -0.014f, -0.155f,  0.048f, 0.014f, -0.080f);
+            t3d_xf_rotate_x(52.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_frog_leg_air);
         } else {
-            glColor3f(0.20f, 0.68f, 0.20f);
-            draw_gem(0.058f, 0.068f, 0.098f);
-            glColor3f(0.34f, 0.84f, 0.26f);
-            draw_cbox(-0.048f, -0.082f, -0.050f,  0.048f, -0.058f, 0.075f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_frog_leg_seated);
         }
-        glPopMatrix();
+        t3d_xf_pop();
     }
-
-    glPopMatrix(); // body
-    glPopMatrix(); // frog root
 }
 
 static void render_turkey(const Turkey *tk) {
     bool walking = (tk->state == TURKEY_WALK_IN ||
                     tk->state == TURKEY_WALK_OUT ||
                     tk->state == TURKEY_SCURRY ||
-                    tk->state == TURKEY_WALK_TO_FIRE);
+                    tk->state == TURKEY_WALK_TO_FIRE ||
+                    tk->state == TURKEY_STRUT_DANCE);
     float stride  = walking ? sinf(tk->walk_phase) : 0.0f;
     float waddle  = walking ? cosf(tk->walk_phase) * 7.5f : 0.0f;
     float bob_y   = walking ? fabsf(sinf(tk->walk_phase)) * 0.022f
                             : sinf(tk->walk_phase) * 0.008f;
     float head_z  = walking ? sinf(tk->walk_phase * 2.0f) * 0.032f : 0.0f;
-    float wing_fl = (tk->state == TURKEY_SCURRY || tk->hop_y > 0.01f)
+    float wing_fl = (tk->state == TURKEY_SCURRY || tk->state == TURKEY_STRUT_DANCE || tk->hop_y > 0.01f)
                     ? (28.0f + 26.0f * sinf(tk->walk_phase * 2.5f))
                     : (6.0f + 6.0f * tk->tail_flare);
 
-    glPushMatrix();
-    glTranslatef(tk->x, tk->y + tk->hop_y, tk->z);
-    glRotatef(tk->yaw, 0.0f, 1.0f, 0.0f);
+    t3d_xf_reset();
+    t3d_xf_translate(tk->x, tk->y + tk->hop_y, tk->z);
+    t3d_xf_rotate_y(tk->yaw);
 
-    // 1. Animated Orange Legs & Feet
-    glColor3f(0.96f, 0.60f, 0.14f);
     for (int side = -1; side <= 1; side += 2) {
-        float lx = side * 0.068f;
-        float swing = stride * (float)side * 28.0f;
-        glPushMatrix();
-        glTranslatef(lx, 0.18f, 0.0f);
-        glRotatef(swing, 1.0f, 0.0f, 0.0f);
-        draw_cbox(-0.018f, -0.175f, -0.018f,  0.018f, 0.0f, 0.018f);
-        draw_cbox(-0.038f, -0.180f, -0.025f,  0.038f, -0.158f, 0.070f);
-        glPopMatrix();
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.068f, 0.18f, 0.0f);
+        t3d_xf_rotate_x(stride * (float)side * 28.0f);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_turkey_leg);
+        t3d_xf_pop();
     }
 
-    // 2. Plump Waddling Turkey Body
-    glPushMatrix();
-    glTranslatef(0.0f, 0.27f + bob_y, 0.0f);
-    glRotatef(waddle, 0.0f, 0.0f, 1.0f);
+    t3d_xf_translate(0.0f, 0.27f + bob_y, 0.0f);
+    t3d_xf_rotate_z(waddle);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_turkey_body);
 
-    glColor3f(0.64f, 0.34f, 0.15f);
-    draw_ellipsoid(0.165f, 0.150f, 0.200f);
-
-    glPushMatrix();
-    glTranslatef(0.0f, -0.01f, 0.125f);
-    glColor3f(0.78f, 0.46f, 0.20f);
-    draw_gem(0.112f, 0.098f, 0.098f);
-    glPopMatrix();
-
-    // 3. Flapping Side Wings
-    glColor3f(0.48f, 0.24f, 0.10f);
     for (int side = -1; side <= 1; side += 2) {
-        glPushMatrix();
-        glTranslatef(side * 0.148f, 0.025f, 0.0f);
-        glRotatef((float)side * wing_fl, 0.0f, 0.0f, 1.0f);
-        draw_cbox(-0.028f, -0.098f, -0.125f,  0.028f, 0.045f, 0.098f);
-        glPopMatrix();
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.148f, 0.025f, 0.0f);
+        t3d_xf_rotate_z((float)side * wing_fl);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_turkey_wing);
+        t3d_xf_pop();
     }
 
-    // 4. Glorious Fanned Autumn Tail Feathers
-    glDisable(GL_CULL_FACE);
-    glPushMatrix();
-    glTranslatef(0.0f, 0.04f, -0.165f);
-    glRotatef(-20.0f + 16.0f * tk->tail_flare, 1.0f, 0.0f, 0.0f);
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, 0.04f, -0.165f);
+    t3d_xf_rotate_x(-20.0f + 16.0f * tk->tail_flare);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_turkey_tail);
+    t3d_xf_pop();
 
-    float fan_scale = 1.0f + 0.18f * tk->tail_flare;
-    for (int f = -3; f <= 3; f++) {
-        float ang = (float)f * (19.5f + 3.5f * tk->tail_flare);
-        glPushMatrix();
-        glRotatef(ang, 0.0f, 0.0f, 1.0f);
-        float r, g, b;
-        int m = (f + 3) % 3;
-        if (m == 0)      { r = 0.72f; g = 0.30f; b = 0.09f; }
-        else if (m == 1) { r = 0.94f; g = 0.48f; b = 0.10f; }
-        else             { r = 0.86f; g = 0.64f; b = 0.16f; }
-
-        float fh = (0.34f - fabsf((float)f) * 0.018f) * fan_scale;
-        float fw = 0.058f * fan_scale;
-        float fz = -0.005f * fabsf((float)f);
-
-        glColor3f(r, g, b);
-        glNormal3f(0.0f, 0.25f, 0.96f);
-        glBegin(GL_QUADS);
-        glVertex3f(-fw * 0.42f, 0.0f,       fz);
-        glVertex3f( fw * 0.42f, 0.0f,       fz);
-        glVertex3f( fw,         fh * 0.80f, fz);
-        glVertex3f(-fw,         fh * 0.80f, fz);
-        glEnd();
-
-        glColor3f(0.98f, 0.90f, 0.68f);
-        glBegin(GL_TRIANGLES);
-        glVertex3f(-fw,   fh * 0.80f, fz);
-        glVertex3f( fw,   fh * 0.80f, fz);
-        glVertex3f( 0.0f, fh,         fz);
-        glEnd();
-        glPopMatrix();
-    }
-    glPopMatrix();
-    glEnable(GL_CULL_FACE);
-
-    // 5. Bobbing Neck, Head, Red Wattle/Snood & Golden Beak
-    glPushMatrix();
-    glTranslatef(0.0f, 0.095f, 0.150f + head_z);
-    glRotatef(tk->head_turn, 0.0f, 1.0f, 0.0f);
-
-    glColor3f(0.84f, 0.28f, 0.20f);
-    draw_cbox(-0.038f, -0.025f, -0.036f,  0.038f, 0.145f, 0.036f);
-
-    glPushMatrix();
-    glTranslatef(0.0f, 0.175f, 0.015f);
-    glColor3f(0.90f, 0.26f, 0.22f);
-    draw_gem(0.064f, 0.060f, 0.070f);
-
-    glColor3f(1.00f, 0.14f, 0.14f);
-    draw_cbox(-0.020f, -0.100f, 0.030f,  0.020f, -0.015f, 0.072f);
-    draw_cbox(-0.014f, -0.028f, 0.068f,  0.014f,  0.022f, 0.098f);
-
-    glColor3f(1.00f, 0.82f, 0.18f);
-    glBegin(GL_TRIANGLES);
-    glNormal3f( 0.0f,  0.6f, 0.8f);
-    glVertex3f(-0.026f,  0.012f, 0.058f);
-    glVertex3f( 0.026f,  0.012f, 0.058f);
-    glVertex3f( 0.0f,   -0.008f, 0.135f);
-
-    glNormal3f( 0.0f, -0.6f, 0.8f);
-    glVertex3f( 0.026f, -0.020f, 0.058f);
-    glVertex3f(-0.026f, -0.020f, 0.058f);
-    glVertex3f( 0.0f,   -0.008f, 0.135f);
-
-    glNormal3f(-0.8f,  0.0f, 0.6f);
-    glVertex3f(-0.026f, -0.020f, 0.058f);
-    glVertex3f(-0.026f,  0.012f, 0.058f);
-    glVertex3f( 0.0f,   -0.008f, 0.135f);
-
-    glNormal3f( 0.8f,  0.0f, 0.6f);
-    glVertex3f( 0.026f,  0.012f, 0.058f);
-    glVertex3f( 0.026f, -0.020f, 0.058f);
-    glVertex3f( 0.0f,   -0.008f, 0.135f);
-    glEnd();
-
-    glColor3f(0.06f, 0.05f, 0.05f);
-    draw_cbox(-0.066f, 0.006f, 0.018f, -0.052f, 0.028f, 0.042f);
-    draw_cbox( 0.052f, 0.006f, 0.018f,  0.066f, 0.028f, 0.042f);
-
-    glPopMatrix();
-    glPopMatrix();
-    glPopMatrix();
-    glPopMatrix();
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, 0.095f, 0.150f + head_z);
+    t3d_xf_rotate_y(tk->head_turn);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_turkey_head);
+    t3d_xf_pop();
 }
 
 static void render_roasted_turkey(const Turkey *tk) {
-    glPushMatrix();
-    glTranslatef(tk->x, tk->y + tk->hop_y, tk->z);
-    glRotatef(tk->spin_angle, 0.0f, 1.0f, 0.0f);
-
-    // 1. Gleaming Silver Serving Platter (low-poly octagonal dish!)
-    glColor3f(0.84f, 0.86f, 0.90f);
-    glPushMatrix();
-    glTranslatef(0.0f, 0.022f, 0.0f);
-    draw_gem(0.32f, 0.024f, 0.25f);
-    glPopMatrix();
-
-    // Inner bright platter rim highlight
-    glColor3f(0.95f, 0.96f, 0.98f);
-    draw_cbox(-0.22f, 0.022f, -0.16f,  0.22f, 0.036f, 0.16f);
-
-    // Fresh green parsley & red cranberry garnishes tucked around the platter!
-    glColor3f(0.18f, 0.68f, 0.22f);
-    draw_cbox(-0.25f, 0.034f,  0.07f, -0.18f, 0.068f,  0.14f);
-    draw_cbox( 0.18f, 0.034f,  0.06f,  0.25f, 0.068f,  0.13f);
-    draw_cbox(-0.24f, 0.034f, -0.13f, -0.17f, 0.068f, -0.06f);
-    draw_cbox( 0.17f, 0.034f, -0.13f,  0.24f, 0.068f, -0.06f);
-    glColor3f(0.88f, 0.12f, 0.16f);
-    draw_cbox(-0.22f, 0.044f,  0.02f, -0.18f, 0.078f,  0.06f);
-    draw_cbox( 0.19f, 0.044f, -0.04f,  0.23f, 0.078f,  0.00f);
-
-    // 2. Plump Glazed Golden-Brown Roast Turkey Body!
-    glPushMatrix();
-    glTranslatef(0.0f, 0.155f, 0.0f);
-    glColor3f(0.86f, 0.44f, 0.12f);
-    draw_ellipsoid(0.195f, 0.135f, 0.155f);
-
-    // Rich crispy caramelized golden breast highlight on top
-    glPushMatrix();
-    glTranslatef(-0.02f, 0.065f, 0.0f);
-    glColor3f(0.95f, 0.56f, 0.16f);
-    draw_gem(0.145f, 0.075f, 0.115f);
-    glPopMatrix();
-
-    // Tucked roasted side wings
-    glColor3f(0.76f, 0.36f, 0.10f);
-    draw_cbox(-0.14f, -0.055f,  0.125f,  0.08f, 0.030f,  0.175f);
-    draw_cbox(-0.14f, -0.055f, -0.175f,  0.08f, 0.030f, -0.125f);
-
-    // 3. Two Iconic Cartoon Drumsticks Poking Up with White Paper Chef Frills!
-    for (int side = -1; side <= 1; side += 2) {
-        glPushMatrix();
-        glTranslatef(0.105f, 0.015f, (float)side * 0.105f);
-        glRotatef((float)side * -24.0f, 1.0f, 0.0f, 0.0f);
-        glRotatef(-34.0f, 0.0f, 0.0f, 1.0f);
-
-        // Juicy roasted drumstick thigh
-        glColor3f(0.82f, 0.40f, 0.11f);
-        draw_gem(0.062f, 0.095f, 0.062f);
-
-        // Exposed bone stalk
-        glColor3f(0.96f, 0.92f, 0.82f);
-        draw_cbox(-0.018f, 0.070f, -0.018f,  0.018f, 0.165f, 0.018f);
-
-        // Classic puffy white paper Thanksgiving frill/cuff on the bone tip!
-        glColor3f(0.98f, 0.98f, 0.98f);
-        glPushMatrix();
-        glTranslatef(0.0f, 0.175f, 0.0f);
-        draw_gem(0.052f, 0.044f, 0.052f);
-        glPopMatrix();
-
-        glPopMatrix();
-    }
-
-    glPopMatrix(); // roast body
-    glPopMatrix(); // platter root
+    t3d_xf_reset();
+    t3d_xf_translate(tk->x, tk->y + tk->hop_y, tk->z);
+    t3d_xf_rotate_y(tk->spin_angle);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_roasted_turkey);
 }
 
 static void render_cat(const Turkey *tk) {
@@ -1040,234 +1576,222 @@ static void render_cat(const Turkey *tk) {
     float stride = walking ? sinf(tk->walk_phase) : 0.0f;
     float bob_y  = walking ? fabsf(sinf(tk->walk_phase)) * 0.016f : 0.0f;
     float swish  = sinf(tk->walk_phase * (sitting ? 1.1f : 0.75f)) * (sitting ? 26.0f : 16.0f);
-    float breath = napping ? (1.0f + 0.05f * sinf(tk->walk_phase)) : 1.0f;
 
-    glPushMatrix();
-    glTranslatef(tk->x, tk->y + tk->hop_y, tk->z);
-    glRotatef(tk->yaw, 0.0f, 1.0f, 0.0f);
+    t3d_xf_reset();
+    t3d_xf_translate(tk->x, tk->y + tk->hop_y, tk->z);
+    t3d_xf_rotate_y(tk->yaw);
 
     if (napping) {
-        // ---------------------------------------------------------
-        // COZY CURLED-UP SLEEPING CAT LOAF (A+B Easter Egg!)
-        // ---------------------------------------------------------
-        glPushMatrix();
-        glTranslatef(0.0f, 0.095f, 0.0f);
-
-        // Curled warm ginger tabby loaf body
-        glColor3f(0.92f, 0.52f, 0.16f);
-        draw_ellipsoid(0.165f, 0.092f * breath, 0.185f);
-
-        // Marmalade tabby back stripes
-        glColor3f(0.70f, 0.34f, 0.09f);
-        draw_cbox(-0.115f, 0.065f * breath, -0.090f,  0.115f, 0.088f * breath, -0.055f);
-        draw_cbox(-0.125f, 0.072f * breath, -0.015f,  0.125f, 0.095f * breath,  0.020f);
-        draw_cbox(-0.110f, 0.064f * breath,  0.055f,  0.110f, 0.086f * breath,  0.088f);
-
-        // Tucked little white paws in front
-        glColor3f(0.96f, 0.94f, 0.88f);
-        draw_cbox(-0.085f, -0.092f, 0.130f, -0.025f, -0.056f, 0.195f);
-        draw_cbox( 0.025f, -0.092f, 0.130f,  0.085f, -0.056f, 0.195f);
-
-        // Tail curled snugly around side
-        glColor3f(0.88f, 0.48f, 0.14f);
-        draw_cbox(0.130f, -0.082f, -0.140f,  0.185f, -0.036f,  0.100f);
-        glColor3f(0.96f, 0.94f, 0.88f);
-        draw_cbox(0.110f, -0.082f,  0.090f,  0.175f, -0.036f,  0.155f);
-
-        // Resting head tucked neatly down on paws
-        glPushMatrix();
-        glTranslatef(0.0f, 0.020f, 0.165f);
-        glRotatef(14.0f, 1.0f, 0.0f, 0.0f);
-        glColor3f(0.94f, 0.55f, 0.18f);
-        draw_gem(0.092f, 0.078f, 0.088f);
-        // Cream muzzle & tiny pink nose
-        glColor3f(0.96f, 0.93f, 0.86f);
-        draw_cbox(-0.042f, -0.044f, 0.052f,  0.042f, -0.008f, 0.095f);
-        glColor3f(0.96f, 0.56f, 0.62f);
-        draw_cbox(-0.015f, -0.014f, 0.088f,  0.015f,  0.006f, 0.104f);
-        // Peaceful closed sleeping eye lines!
-        glColor3f(0.18f, 0.10f, 0.06f);
-        draw_cbox(-0.058f, 0.004f, 0.066f, -0.020f, 0.015f, 0.084f);
-        draw_cbox( 0.020f, 0.004f, 0.066f,  0.058f, 0.015f, 0.084f);
-        // Pointy ears!
-        glColor3f(0.90f, 0.48f, 0.14f);
-        for (int side = -1; side <= 1; side += 2) {
-            float ex = side * 0.052f;
-            glBegin(GL_TRIANGLES);
-            glNormal3f(0.0f, 0.4f, 0.9f);
-            glVertex3f(ex - 0.028f, 0.052f, 0.005f);
-            glVertex3f(ex + 0.028f, 0.052f, 0.005f);
-            glVertex3f(ex + side * 0.012f, 0.125f, 0.005f);
-            glEnd();
+        float breath_y = 0.004f * sinf(tk->walk_phase);
+        t3d_xf_translate(0.0f, breath_y, 0.0f);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_cat_nap);
+        if (tk->season == SEASON_CHRISTMAS) {
+            t3d_xf_translate(0.0f, 0.115f, 0.165f);
+            t3d_xf_rotate_x(14.0f);
+            t3d_xf_translate(0.0f, 0.068f, -0.006f);
+            t3d_xf_rotate_x(-12.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_santa_hat_cat);
+        } else if (tk->season == SEASON_SPRING) {
+            t3d_xf_translate(0.0f, 0.115f, 0.165f);
+            t3d_xf_rotate_x(14.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_spring_flower_cat);
+        } else if (tk->season == SEASON_SUMMER) {
+            t3d_xf_translate(0.0f, 0.115f, 0.165f);
+            t3d_xf_rotate_x(14.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_summer_shades_cat);
         }
-        glPopMatrix();
-
-        glPopMatrix();
-        glPopMatrix();
         return;
     }
 
-    // ---------------------------------------------------------
-    // WALKING OR SITTING ORANGE TABBY CAT
-    // ---------------------------------------------------------
     float body_y     = sitting ? 0.175f : (0.195f + bob_y);
     float body_pitch = sitting ? -26.0f : (tk->state == TURKEY_SCURRY ? -10.0f : 0.0f);
 
-    // 1. Four Slender Animated Legs with White Socks
     for (int side = -1; side <= 1; side += 2) {
         float lx = side * 0.064f;
-        // Front legs
-        glPushMatrix();
-        glTranslatef(lx, 0.155f, 0.115f);
-        glRotatef(sitting ? -6.0f : (stride * (float)side * 26.0f), 1.0f, 0.0f, 0.0f);
-        glColor3f(0.90f, 0.50f, 0.16f);
-        draw_cbox(-0.022f, -0.115f, -0.022f,  0.022f, 0.015f, 0.022f);
-        glColor3f(0.96f, 0.94f, 0.88f); // cute white socks!
-        draw_cbox(-0.024f, -0.155f, -0.022f,  0.024f, -0.112f, 0.036f);
-        glPopMatrix();
+        t3d_xf_push();
+        t3d_xf_translate(lx, 0.155f, 0.115f);
+        t3d_xf_rotate_x(sitting ? -6.0f : (stride * (float)side * 26.0f));
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_cat_front_leg);
+        t3d_xf_pop();
 
-        // Back legs
-        glPushMatrix();
+        t3d_xf_push();
         if (sitting) {
-            // Folded seated haunches
-            glTranslatef(lx * 1.15f, 0.085f, -0.105f);
-            glColor3f(0.88f, 0.48f, 0.14f);
-            draw_gem(0.052f, 0.072f, 0.082f);
-            glColor3f(0.96f, 0.94f, 0.88f);
-            draw_cbox(-0.026f, -0.085f, -0.020f,  0.026f, -0.052f, 0.075f);
+            t3d_xf_translate(lx * 1.15f, 0.085f, -0.105f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_cat_haunch);
         } else {
-            glTranslatef(lx, 0.155f, -0.120f);
-            glRotatef(-stride * (float)side * 26.0f, 1.0f, 0.0f, 0.0f);
-            glColor3f(0.88f, 0.48f, 0.14f);
-            draw_cbox(-0.024f, -0.115f, -0.024f,  0.024f, 0.015f, 0.024f);
-            glColor3f(0.96f, 0.94f, 0.88f);
-            draw_cbox(-0.026f, -0.155f, -0.024f,  0.026f, -0.112f, 0.036f);
+            t3d_xf_translate(lx, 0.155f, -0.120f);
+            t3d_xf_rotate_x(-stride * (float)side * 26.0f);
+            t3d_xf_apply(T3D_PROP_SCALE);
+            t3d_mesh_draw(&m_cat_back_leg);
         }
-        glPopMatrix();
+        t3d_xf_pop();
     }
 
-    // 2. Sleek Ginger Tabby Torso, Stripes & Cream Chest Ruff
-    glPushMatrix();
-    glTranslatef(0.0f, body_y, 0.0f);
-    glRotatef(body_pitch, 1.0f, 0.0f, 0.0f);
+    t3d_xf_translate(0.0f, body_y, 0.0f);
+    t3d_xf_rotate_x(body_pitch);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_cat_torso);
 
-    glColor3f(0.92f, 0.52f, 0.16f);
-    draw_ellipsoid(0.105f, 0.092f, 0.205f);
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, 0.035f, -0.175f);
+    t3d_xf_rotate_y(swish);
+    t3d_xf_rotate_x(-body_pitch + 18.0f);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_cat_tail_lower);
 
-    // Cream-white fuzzy chest ruff
-    glPushMatrix();
-    glTranslatef(0.0f, -0.015f, 0.145f);
-    glColor3f(0.96f, 0.94f, 0.88f);
-    draw_gem(0.078f, 0.074f, 0.072f);
-    glPopMatrix();
+    t3d_xf_translate(0.0f, 0.145f, 0.0f);
+    t3d_xf_rotate_z(26.0f + swish * 0.4f);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_cat_tail_upper);
+    t3d_xf_pop();
 
-    // Marmalade tabby back stripes
-    glColor3f(0.68f, 0.32f, 0.08f);
-    draw_cbox(-0.078f, 0.060f, -0.105f,  0.078f, 0.088f, -0.070f);
-    draw_cbox(-0.084f, 0.068f, -0.020f,  0.084f, 0.096f,  0.015f);
-    draw_cbox(-0.076f, 0.060f,  0.065f,  0.076f, 0.088f,  0.098f);
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, 0.085f, 0.185f);
+    t3d_xf_rotate_x(-body_pitch);
+    t3d_xf_rotate_y(tk->head_turn);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_cat_head);
+    t3d_mesh_draw(&m_cat_ears);
 
-    // 3. Graceful Curving Swishing Tail (with cute white tip!)
-    glPushMatrix();
-    glTranslatef(0.0f, 0.035f, -0.175f);
-    glRotatef(swish, 0.0f, 1.0f, 0.0f);
-    glRotatef(-body_pitch + 18.0f, 1.0f, 0.0f, 0.0f);
-    glColor3f(0.90f, 0.50f, 0.15f);
-    draw_cbox(-0.020f, 0.0f, -0.020f,  0.020f, 0.150f, 0.020f);
-    // Upper tail curl + cream tip
-    glTranslatef(0.0f, 0.145f, 0.0f);
-    glRotatef(26.0f + swish * 0.4f, 0.0f, 0.0f, 1.0f);
-    draw_cbox(-0.018f, 0.0f, -0.018f,  0.018f, 0.105f, 0.018f);
-    glColor3f(0.96f, 0.94f, 0.88f);
-    draw_cbox(-0.020f, 0.100f, -0.020f,  0.020f, 0.148f, 0.020f);
-    glPopMatrix();
+    if (tk->season == SEASON_CHRISTMAS) {
+        t3d_xf_translate(0.0f, 0.072f, -0.006f);
+        t3d_xf_rotate_x(-10.0f);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_santa_hat_cat);
+    } else if (tk->season == SEASON_SPRING) {
+        t3d_mesh_draw(&m_spring_flower_cat);
+    } else if (tk->season == SEASON_SUMMER) {
+        t3d_mesh_draw(&m_summer_shades_cat);
+    }
+    t3d_xf_pop();
+}
 
-    // 4. Cat Head, Pointy Ears, Green Eyes & Pink Nose
-    glPushMatrix();
-    glTranslatef(0.0f, 0.085f, 0.185f);
-    glRotatef(-body_pitch, 1.0f, 0.0f, 0.0f);
-    glRotatef(tk->head_turn, 0.0f, 1.0f, 0.0f);
+static void render_penguin(const Turkey *tk) {
+    bool walking = (tk->state == TURKEY_WALK_IN ||
+                    tk->state == TURKEY_WALK_OUT ||
+                    tk->state == TURKEY_SCURRY);
+    bool sliding = (tk->state == TURKEY_PENGUIN_SLIDE);
+    float stride  = walking ? sinf(tk->walk_phase) : (sliding ? sinf(tk->walk_phase) * 0.8f : 0.0f);
+    float waddle  = walking ? cosf(tk->walk_phase) * 8.5f : 0.0f;
+    float bob_y   = walking ? fabsf(sinf(tk->walk_phase)) * 0.020f
+                            : sinf(tk->walk_phase) * 0.006f;
+    float flap    = sliding ? 38.0f
+                  : (tk->state == TURKEY_SCURRY || tk->hop_y > 0.01f || tk->state == TURKEY_PAUSE_GOBBLE || tk->state == TURKEY_PENGUIN_SNOWMAN)
+                    ? (26.0f + 22.0f * sinf(tk->walk_phase * 1.8f))
+                    : 10.0f;
 
-    glColor3f(0.94f, 0.55f, 0.18f);
-    draw_gem(0.094f, 0.084f, 0.090f);
+    t3d_xf_reset();
+    t3d_xf_translate(tk->x, tk->y + tk->hop_y, tk->z);
+    t3d_xf_rotate_y(tk->yaw);
 
-    // Cream muzzle & cute pink nose
-    glColor3f(0.96f, 0.94f, 0.88f);
-    draw_cbox(-0.044f, -0.044f, 0.052f,  0.044f, -0.008f, 0.098f);
-    glColor3f(0.96f, 0.52f, 0.60f);
-    draw_cbox(-0.016f, -0.014f, 0.092f,  0.016f,  0.008f, 0.108f);
+    if (sliding) {
+        t3d_xf_translate(0.0f, 0.145f, 0.0f);
+        t3d_xf_rotate_x(80.0f);
+    }
 
-    // Bright emerald green eyes + crisp dark pupils
     for (int side = -1; side <= 1; side += 2) {
-        float ex = side * 0.042f;
-        glColor3f(0.32f, 0.86f, 0.34f);
-        draw_cbox(ex - 0.022f, -0.002f, 0.068f,  ex + 0.022f, 0.034f, 0.084f);
-        glColor3f(0.06f, 0.06f, 0.08f);
-        draw_cbox(ex - 0.009f,  0.002f, 0.080f,  ex + 0.009f, 0.030f, 0.090f);
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.072f, 0.075f, 0.0f);
+        t3d_xf_rotate_x(stride * (float)side * 26.0f);
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_penguin_foot);
+        t3d_xf_pop();
     }
 
-    // Two pointy cat ears with pink inner triangles!
-    glDisable(GL_CULL_FACE);
+    t3d_xf_translate(0.0f, (sliding ? 0.21f : (0.225f + bob_y)), 0.0f);
+    t3d_xf_rotate_z(waddle);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_penguin_body);
+
     for (int side = -1; side <= 1; side += 2) {
-        float ex = side * 0.054f;
-        glColor3f(0.90f, 0.48f, 0.14f);
-        glBegin(GL_TRIANGLES);
-        glNormal3f(0.0f, 0.3f, 0.95f);
-        glVertex3f(ex - 0.032f, 0.056f, 0.002f);
-        glVertex3f(ex + 0.032f, 0.056f, 0.002f);
-        glVertex3f(ex + side * 0.014f, 0.140f, 0.004f);
-        glEnd();
-
-        // Cute pink inner ear
-        glColor3f(0.96f, 0.62f, 0.66f);
-        glBegin(GL_TRIANGLES);
-        glNormal3f(0.0f, 0.3f, 0.95f);
-        glVertex3f(ex - 0.017f, 0.064f, 0.012f);
-        glVertex3f(ex + 0.017f, 0.064f, 0.012f);
-        glVertex3f(ex + side * 0.008f, 0.118f, 0.012f);
-        glEnd();
+        t3d_xf_push();
+        t3d_xf_translate(side * 0.142f, 0.055f, 0.010f);
+        t3d_xf_rotate_z((float)side * flap);
+        if (sliding) {
+            t3d_xf_rotate_x(-25.0f);
+        }
+        t3d_xf_apply(T3D_PROP_SCALE);
+        t3d_mesh_draw(&m_penguin_flipper);
+        t3d_xf_pop();
     }
-    glEnable(GL_CULL_FACE);
 
-    glPopMatrix(); // head
-    glPopMatrix(); // body
-    glPopMatrix(); // cat root
+    t3d_xf_push();
+    t3d_xf_translate(0.078f, 0.127f, -0.030f);
+    t3d_xf_rotate_x(sliding ? -65.0f : (-18.0f + sinf(tk->walk_phase) * 8.0f));
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_penguin_scarf_tail);
+    t3d_xf_pop();
+
+    t3d_xf_push();
+    t3d_xf_translate(0.0f, 0.222f, 0.015f);
+    t3d_xf_rotate_y(tk->head_turn);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_penguin_head);
+    t3d_xf_pop();
+}
+
+static void render_mini_snowman(float cx, float cy, float cz) {
+    t3d_xf_reset();
+    t3d_xf_translate(cx, cy, cz);
+    t3d_xf_apply(T3D_PROP_SCALE);
+    t3d_mesh_draw(&m_mini_snowman);
 }
 
 void turkey_render(const Turkey *tk) {
-    if (tk->state == TURKEY_HIDDEN || tk->state == TURKEY_ROASTING) return;
-
-    glDisable(GL_TEXTURE_2D);
-    glEnable(GL_LIGHTING);
-    glEnable(GL_CULL_FACE);
-
-    if (tk->state == TURKEY_ROAST_POP || tk->state == TURKEY_SERVED) {
-        render_roasted_turkey(tk);
-    } else if (tk->species == VISITOR_FROG) {
-        render_frog(tk);
-    } else if (tk->species == VISITOR_CAT) {
-        render_cat(tk);
-    } else {
-        render_turkey(tk);
+    if (!s_lists_ready) {
+        turkey_init_lists();
+    }
+    bool draw_visitor = (tk->state != TURKEY_HIDDEN && tk->state != TURKEY_ROASTING);
+    if (tk->snowman_timer <= 0.0f && !draw_visitor) {
+        return;
     }
 
-    glEnable(GL_TEXTURE_2D);
+    t3d_matrix_push_pos(1);
+
+    if (tk->snowman_timer > 0.0f) {
+        render_mini_snowman(tk->snowman_x, 0.18f + tk->snowman_pop_y, tk->snowman_z);
+    }
+
+    if (draw_visitor) {
+        if (tk->state == TURKEY_ROAST_POP || tk->state == TURKEY_SERVED) {
+            render_roasted_turkey(tk);
+        } else if (tk->species == VISITOR_FROG) {
+            render_frog(tk);
+        } else if (tk->species == VISITOR_CAT) {
+            render_cat(tk);
+        } else if (tk->species == VISITOR_PENGUIN) {
+            render_penguin(tk);
+        } else {
+            render_turkey(tk);
+        }
+    }
+
+    t3d_matrix_pop(1);
 }
 
-static void draw_magic_quad(float x, float y, float z, float sz, float rx, float rz) {
+static void draw_magic_quad(float x, float y, float z, float sz, float rx, float rz,
+                            float r, float g, float b, float a) {
     float dx = rx * sz;
     float dz = rz * sz;
-    glTexCoord2f(0.0f, 1.0f); glVertex3f(x - dx, y - sz, z - dz);
-    glTexCoord2f(1.0f, 1.0f); glVertex3f(x + dx, y - sz, z + dz);
-    glTexCoord2f(1.0f, 0.0f); glVertex3f(x + dx, y + sz, z + dz);
-    glTexCoord2f(0.0f, 0.0f); glVertex3f(x - dx, y + sz, z - dz);
+    T3DBuildVert v0 = { x - dx, y - sz, z - dz,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  r, g, b, a };
+    T3DBuildVert v1 = { x + dx, y - sz, z + dz,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  r, g, b, a };
+    T3DBuildVert v2 = { x + dx, y + sz, z + dz,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,  r, g, b, a };
+    T3DBuildVert v3 = { x - dx, y + sz, z - dz,  0.0f, 0.0f, 1.0f,  0.0f, 0.0f,  r, g, b, a };
+    t3d_dyn_quad_vc(&v0, &v1, &v2, &v3);
 }
 
-void turkey_render_magic_fx(const Turkey *tk, GLuint tex_spark, float cam_x, float cam_z) {
+void turkey_render_magic_fx(const Turkey *tk, const T3DTexture *tex_spark, float cam_x, float cam_z) {
     bool casting = (tk->state == TURKEY_FROG_CAST && tk->cast_elapsed < 0.90f);
     bool burst   = (tk->magic_burst > 0.0f);
     bool napping = (tk->state == TURKEY_CAT_NAP);
-    if (!casting && !burst && !napping) return;
+    bool sliding = (tk->state == TURKEY_PENGUIN_SLIDE);
+    if (!casting && !burst && !napping && !sliding) return;
 
     float vx = cam_x;
     float vz = cam_z - 0.34f;
@@ -1276,17 +1800,9 @@ void turkey_render_magic_fx(const Turkey *tk, GLuint tex_spark, float cam_x, flo
     float rx = vz / len;
     float rz = -vx / len;
 
-    glDisable(GL_LIGHTING);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_TEXTURE_2D);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-    glBindTexture(GL_TEXTURE_2D, tex_spark);
+    t3d_dyn_begin_quads(tex_spark, T3D_ROOM_SCALE, true, false, false, false);
 
-    glBegin(GL_QUADS);
-
-    // 1. Sparkling magic bolt arcing from frog's wand to the left hearth pumpkin (-1.46, 0.30, 0.34)!
+    // 1. Sparkling magic bolt arcing from frog's wand to the left hearth prop (-1.46, 0.32, 0.34)!
     if (casting) {
         float t = tk->cast_elapsed / 0.72f;
         float sx = tk->x, sy = tk->y + 0.42f, sz_pos = tk->z;
@@ -1300,30 +1816,50 @@ void turkey_render_magic_fx(const Turkey *tk, GLuint tex_spark, float cam_x, flo
             float pz = sz_pos + (ez - sz_pos) * u + sinf(u * 12.0f + i) * 0.04f;
             float size = (0.068f - i * 0.0045f);
             float alpha = 1.0f - i * 0.085f;
-            if ((i & 1) == 0) {
-                glColor4f(1.00f, 0.94f, 0.36f, alpha); // gold star
+            if (tk->season == SEASON_SPRING) {
+                if ((i & 1) == 0) draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.64f, 0.84f, alpha);
+                else              draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.94f, 0.42f, alpha);
+            } else if (tk->season == SEASON_SUMMER) {
+                if ((i & 1) == 0) draw_magic_quad(px, py, pz, size, rx, rz, 0.86f, 1.00f, 0.36f, alpha);
+                else              draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.72f, 0.22f, alpha);
+            } else if (tk->season == SEASON_CHRISTMAS) {
+                if ((i & 1) == 0) draw_magic_quad(px, py, pz, size, rx, rz, 0.96f, 0.98f, 1.00f, alpha);
+                else              draw_magic_quad(px, py, pz, size, rx, rz, 0.45f, 0.92f, 1.00f, alpha);
             } else {
-                glColor4f(0.45f, 0.92f, 1.00f, alpha); // fairy cyan star
+                if ((i & 1) == 0) draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.94f, 0.36f, alpha);
+                else              draw_magic_quad(px, py, pz, size, rx, rz, 0.45f, 0.92f, 1.00f, alpha);
             }
-            draw_magic_quad(px, py, pz, size, rx, rz);
         }
     }
 
-    // 2. Celebratory golden/magenta sparkle poof when the pumpkin turns into a Pumpkin Pie!
+    // 2. Celebratory seasonal sparkle poof
     if (burst) {
-        float u = 1.0f - (tk->magic_burst / 1.15f); // 0 -> 1
+        float u = 1.0f - (tk->magic_burst / 1.15f);
         float alpha = (1.0f - u) * 0.95f;
         for (int i = 0; i < 14; i++) {
             float ang = (float)i * 0.4488f + u * 2.2f;
             float rad = 0.08f + u * 0.36f;
-            float px = -1.46f + cosf(ang) * rad;
-            float py =  0.26f + u * (0.28f + (i % 3) * 0.14f) - u * u * 0.16f;
-            float pz =  0.34f + sinf(ang) * rad;
+            float px = tk->burst_x + cosf(ang) * rad;
+            float py = 0.26f + u * (0.28f + (i % 3) * 0.14f) - u * u * 0.16f;
+            float pz = tk->burst_z + sinf(ang) * rad;
             float size = (0.062f - 0.025f * u) * (0.75f + 0.25f * (i % 2));
-            if (i % 3 == 0)      glColor4f(1.00f, 0.92f, 0.32f, alpha);
-            else if (i % 3 == 1) glColor4f(1.00f, 0.56f, 0.88f, alpha);
-            else                 glColor4f(0.50f, 0.96f, 1.00f, alpha);
-            draw_magic_quad(px, py, pz, size, rx, rz);
+            if (tk->season == SEASON_SPRING) {
+                if (i % 3 == 0)      draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.68f, 0.86f, alpha);
+                else if (i % 3 == 1) draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.94f, 0.44f, alpha);
+                else                 draw_magic_quad(px, py, pz, size, rx, rz, 0.98f, 0.92f, 0.98f, alpha);
+            } else if (tk->season == SEASON_SUMMER) {
+                if (i % 3 == 0)      draw_magic_quad(px, py, pz, size, rx, rz, 0.86f, 1.00f, 0.36f, alpha);
+                else if (i % 3 == 1) draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.78f, 0.24f, alpha);
+                else                 draw_magic_quad(px, py, pz, size, rx, rz, 0.56f, 0.96f, 0.62f, alpha);
+            } else if (tk->season == SEASON_CHRISTMAS) {
+                if (i % 3 == 0)      draw_magic_quad(px, py, pz, size, rx, rz, 0.96f, 0.98f, 1.00f, alpha);
+                else if (i % 3 == 1) draw_magic_quad(px, py, pz, size, rx, rz, 0.50f, 0.92f, 1.00f, alpha);
+                else                 draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.38f, 0.38f, alpha);
+            } else {
+                if (i % 3 == 0)      draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.92f, 0.32f, alpha);
+                else if (i % 3 == 1) draw_magic_quad(px, py, pz, size, rx, rz, 1.00f, 0.56f, 0.88f, alpha);
+                else                 draw_magic_quad(px, py, pz, size, rx, rz, 0.50f, 0.96f, 1.00f, alpha);
+            }
         }
     }
 
@@ -1336,15 +1872,27 @@ void turkey_render_magic_fx(const Turkey *tk, GLuint tex_spark, float cam_x, flo
             float py = tk->y + 0.24f + u * 0.42f;
             float pz = tk->z + 0.10f;
             float size = 0.024f + 0.022f * u;
-            glColor4f(0.95f, 0.92f, 1.00f, alpha);
-            draw_magic_quad(px, py, pz, size, rx, rz);
+            draw_magic_quad(px, py, pz, size, rx, rz, 0.95f, 0.92f, 1.00f, alpha);
         }
     }
 
-    glEnd();
+    // 4. Crisp frosty cyan/white snow-spray motes trailing behind the sliding SM64 Penguin!
+    if (sliding) {
+        float yrad = tk->yaw * 0.0174533f;
+        float bx = -sinf(yrad);
+        float bz = -cosf(yrad);
+        for (int i = 0; i < 8; i++) {
+            float u = fmodf(tk->slide_elapsed * 2.4f + (float)i * 0.125f, 1.0f);
+            float alpha = (1.0f - u) * 0.88f;
+            float lat = ((i & 1) ? 1.0f : -1.0f) * (0.04f + 0.12f * u);
+            float px = tk->x + bx * (0.12f + u * 0.34f) + bz * lat;
+            float py = tk->y + 0.06f + u * 0.20f;
+            float pz = tk->z + bz * (0.12f + u * 0.34f) - bx * lat;
+            float size = 0.036f * (1.0f - 0.35f * u);
+            if ((i & 1) == 0) draw_magic_quad(px, py, pz, size, rx, rz, 0.88f, 0.96f, 1.00f, alpha);
+            else              draw_magic_quad(px, py, pz, size, rx, rz, 0.55f, 0.90f, 1.00f, alpha);
+        }
+    }
 
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_LIGHTING);
+    t3d_dyn_end_quads();
 }

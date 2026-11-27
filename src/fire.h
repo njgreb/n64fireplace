@@ -2,11 +2,12 @@
 #define HEARTH_FIRE_H
 
 #include <stdbool.h>
-#include <GL/gl.h>
+#include "t3d_gfx.h"
 
 #define NUM_FLAME_THEMES 5
-#define MAX_FLAME_PARTICLES 16
-#define MAX_SPARK_PARTICLES 26
+#define MAX_FLAME_PARTICLES 28
+#define MAX_SPARK_PARTICLES 48
+#define MAX_SMOKE_PARTICLES 10
 #define MAX_STEAM_PARTICLES 5
 #define MAX_TOSSED_LOGS 3
 
@@ -45,6 +46,14 @@ typedef struct {
 
 typedef struct {
     float x, y, z;
+    float vx, vy;
+    float age, life;
+    float base_sz;
+    float phase;
+} SmokeParticle;
+
+typedef struct {
+    float x, y, z;
     float age, life;
     float phase;
 } SteamParticle;
@@ -74,6 +83,7 @@ typedef struct {
 
     FlameParticle flames[MAX_FLAME_PARTICLES];
     SparkParticle sparks[MAX_SPARK_PARTICLES];
+    SmokeParticle smoke[MAX_SMOKE_PARTICLES];
     SteamParticle steam[MAX_STEAM_PARTICLES];
     TossedLog     tossed_logs[MAX_TOSSED_LOGS];
 
@@ -91,8 +101,10 @@ void fire_adjust_intensity(FireSystem *fs, float delta);
 float fire_effective_intensity(const FireSystem *fs);
 
 // Render flames, glows, sparks, and candle flames/mug steam
-void fire_render_effects(const FireSystem *fs,
-                         GLuint tex_flame, GLuint tex_glow, GLuint tex_spark,
-                         float cam_x, float cam_y, float cam_z);
+void  fire_render_effects(const FireSystem *fs,
+                          const T3DTexture *tex_flame,
+                          const T3DTexture *tex_glow,
+                          const T3DTexture *tex_spark,
+                          float cam_x, float cam_y, float cam_z);
 
 #endif

@@ -31,4 +31,11 @@ RUN git clone --depth 1 -b preview https://github.com/DragonMinded/libdragon.git
     && make tools-install \
     && rm -rf /opt/libdragon-src
 
+# Clone and install Tiny3D (native fixed-point RSP 3D microcode + TPX particles)
+RUN git clone --depth 1 https://github.com/HailToDodongo/tiny3d.git /opt/tiny3d-src \
+    && cd /opt/tiny3d-src \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /opt/tiny3d-src
+
 WORKDIR /work

@@ -125,6 +125,18 @@ static void spawn_spark(SparkParticle *s, float eff_int, bool burst) {
     s->swirl = frand_range(0.25f, 0.65f) * (frand01() > 0.5f ? 1.0f : -1.0f);
 }
 
+static void spawn_smoke(SmokeParticle *sm, float eff_int, bool random_age) {
+    sm->x       = frand_range(-0.34f, 0.34f);
+    sm->y       = frand_range(0.86f, 1.06f);
+    sm->z       = -0.50f + frand_range(-0.12f, 0.08f);
+    sm->vx      = -sm->x * 0.22f + frand_range(-0.04f, 0.04f);
+    sm->vy      = frand_range(0.28f, 0.46f) * (0.80f + 0.25f * eff_int);
+    sm->life    = frand_range(1.1f, 1.9f);
+    sm->age     = random_age ? frand_range(0.0f, sm->life) : 0.0f;
+    sm->base_sz = frand_range(0.11f, 0.19f);
+    sm->phase   = frand_range(0.0f, 6.28318f);
+}
+
 static void spawn_steam(SteamParticle *st, bool random_age) {
     // Mug sits on right side of mantle around (1.08, 2.18, 0.24)
     st->x = 1.08f + frand_range(-0.025f, 0.025f);
@@ -150,6 +162,9 @@ void fire_init(FireSystem *fs) {
         spawn_spark(&fs->sparks[i], eff, false);
         fs->sparks[i].age = frand_range(0.0f, fs->sparks[i].life);
     }
+    for (int i = 0; i < MAX_SMOKE_PARTICLES; i++) {
+        spawn_smoke(&fs->smoke[i], eff, true);
+    }
     for (int i = 0; i < MAX_STEAM_PARTICLES; i++) {
         spawn_steam(&fs->steam[i], true);
     }
@@ -164,7 +179,7 @@ void fire_stoke(FireSystem *fs) {
     float eff = fire_effective_intensity(fs);
     // Launch a shower of excited sparks!
     int burst_count = 0;
-    for (int i = 0; i < MAX_SPARK_PARTICLES && burst_count < 28; i++) {
+    for (int i = 0; i < MAX_SPARK_PARTICLES && burst_count < 36; i++) {
         if (fs->sparks[i].age > fs->sparks[i].life * 0.35f || (i & 1) == 0) {
             spawn_spark(&fs->sparks[i], eff, true);
             burst_count++;
@@ -301,10 +316,30 @@ void fire_update(FireSystem *fs, float dt) {
         // Gentle air drag on lateral velocity
         s->vx *= (1.0f - 0.8f * dt);
         s->vz *= (1.0f - 0.8f * dt);
+        // Bounce off firebox brick side and back walls
+        if (s->y < 1.38f) {
+            if (s->x < -0.66f) { s->x = -0.66f; s->vx = fabsf(s->vx) * 0.55f; }
+            else if (s->x > 0.66f) { s->x = 0.66f; s->vx = -fabsf(s->vx) * 0.55f; }
+        }
+        if (s->z < -0.88f) { s->z = -0.88f; s->vz = fabsf(s->vz) * 0.5f; }
         // Keep sparks inside chimney draft when rising high
         if (s->y > 1.25f) {
             s->z += (-0.48f - s->z) * 1.4f * dt;
         }
+    }
+
+    // Update rising chimney flue smoke wisps
+    for (int i = 0; i < MAX_SMOKE_PARTICLES; i++) {
+        SmokeParticle *sm = &fs->smoke[i];
+        sm->age += dt;
+        if (sm->age >= sm->life || sm->y >= 1.48f) {
+            spawn_smoke(sm, eff, false);
+            continue;
+        }
+        sm->x += (sm->vx + sinf(t * 2.6f + sm->phase) * 0.055f) * dt;
+        sm->y += sm->vy * dt;
+        sm->z += (-0.62f - sm->z) * 1.2f * dt;
+        sm->x *= (1.0f - 0.45f * dt);
     }
 
     // Update mug steam wisps
@@ -322,19 +357,23 @@ void fire_update(FireSystem *fs, float dt) {
 
 static void draw_billboard_quad(float x, float y, float z,
                                 float half_w, float h_down, float h_up,
-                                float rx, float rz) {
+                                float rx, float rz,
+                                float r, float g, float b, float a) {
     // Cylindrical Y-axis billboard using horizontal right vector (rx, 0, rz)
     float dx = rx * half_w;
     float dz = rz * half_w;
 
-    glTexCoord2f(0.0f, 1.0f); glVertex3f(x - dx, y - h_down, z - dz);
-    glTexCoord2f(1.0f, 1.0f); glVertex3f(x + dx, y - h_down, z + dz);
-    glTexCoord2f(1.0f, 0.0f); glVertex3f(x + dx, y + h_up,   z + dz);
-    glTexCoord2f(0.0f, 0.0f); glVertex3f(x - dx, y + h_up,   z - dz);
+    T3DBuildVert v0 = { x - dx, y - h_down, z - dz,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  r, g, b, a };
+    T3DBuildVert v1 = { x + dx, y - h_down, z + dz,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  r, g, b, a };
+    T3DBuildVert v2 = { x + dx, y + h_up,   z + dz,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,  r, g, b, a };
+    T3DBuildVert v3 = { x - dx, y + h_up,   z - dz,  0.0f, 0.0f, 1.0f,  0.0f, 0.0f,  r, g, b, a };
+    t3d_dyn_quad_vc(&v0, &v1, &v2, &v3);
 }
 
 void fire_render_effects(const FireSystem *fs,
-                         GLuint tex_flame, GLuint tex_glow, GLuint tex_spark,
+                         const T3DTexture *tex_flame,
+                         const T3DTexture *tex_glow,
+                         const T3DTexture *tex_spark,
                          float cam_x, float cam_y, float cam_z) {
     const FlameTheme *th = &FLAME_THEMES[fs->theme_idx];
     float eff = fire_effective_intensity(fs);
@@ -349,25 +388,56 @@ void fire_render_effects(const FireSystem *fs,
     float rz = -vx / len;
     (void)cam_y;
 
-    glDisable(GL_LIGHTING);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_TEXTURE_2D);
-    glEnable(GL_BLEND);
-    // Standard alpha blending prevents 8-bit N64 RDP additive color-channel wrap (green artifacts)!
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-
     // ---------------------------------------------------------
-    // 1. Soft Warm Core Hearth Glow + Candle Halos
+    // 1. Soft Warm Core Hearth Glow, Floor/Rug Glow Pools, Candle Halos & Flue Smoke
     // ---------------------------------------------------------
-    glBindTexture(GL_TEXTURE_2D, tex_glow);
-    glBegin(GL_QUADS);
+    t3d_dyn_begin_quads(tex_glow, T3D_ROOM_SCALE, true, false, false, false);
     {
         float g_scale = (0.76f + 0.32f * eff) * (0.93f + 0.08f * fs->flicker);
         float g_alpha = clampf(0.32f + 0.12f * eff, 0.18f, 0.48f);
-        glColor4f(th->outer_r, th->outer_g, th->outer_b, g_alpha);
         draw_billboard_quad(fs->flicker_x * 0.4f, 0.58f, -0.50f,
-                            0.70f * g_scale, 0.34f * g_scale, 0.56f * g_scale, rx, rz);
+                            0.70f * g_scale, 0.34f * g_scale, 0.56f * g_scale, rx, rz,
+                            th->outer_r, th->outer_g, th->outer_b, g_alpha);
+
+        // Animated stone hearth apron firelight pool (y=0.192 cleanly above y=0.18 slab)
+        {
+            float hx = fs->flicker_x * 1.1f;
+            float hz = 0.22f + fs->flicker_z * 0.8f;
+            float hw = 1.05f * g_scale;
+            float hd = 0.52f * g_scale;
+            float ha = clampf(clampf(0.16f + 0.09f * eff, 0.10f, 0.28f) * fs->flicker, 0.0f, 0.34f);
+            T3DBuildVert h0 = { hx - hw, 0.192f, hz + hd, 0,1,0, 0,1, th->light_r, th->light_g, th->light_b, ha };
+            T3DBuildVert h1 = { hx + hw, 0.192f, hz + hd, 0,1,0, 1,1, th->light_r, th->light_g, th->light_b, ha };
+            T3DBuildVert h2 = { hx + hw, 0.192f, hz - hd, 0,1,0, 1,0, th->light_r, th->light_g, th->light_b, ha };
+            T3DBuildVert h3 = { hx - hw, 0.192f, hz - hd, 0,1,0, 0,0, th->light_r, th->light_g, th->light_b, ha };
+            t3d_dyn_quad_vc(&h0, &h1, &h2, &h3);
+        }
+
+        // Animated woven hearth rug firelight pool (y=0.044 cleanly above y=0.035 rug)
+        {
+            float rxp = fs->flicker_x * 1.4f;
+            float rzp = 1.62f + fs->flicker_z * 0.9f;
+            float rhw = 1.22f * g_scale;
+            float rhd = 0.68f * g_scale;
+            float ra  = clampf(clampf(0.12f + 0.07f * eff, 0.07f, 0.22f) * fs->flicker, 0.0f, 0.28f);
+            T3DBuildVert g0 = { rxp - rhw, 0.044f, rzp + rhd, 0,1,0, 0,1, th->light_r, th->light_g, th->light_b, ra };
+            T3DBuildVert g1 = { rxp + rhw, 0.044f, rzp + rhd, 0,1,0, 1,1, th->light_r, th->light_g, th->light_b, ra };
+            T3DBuildVert g2 = { rxp + rhw, 0.044f, rzp - rhd, 0,1,0, 1,0, th->light_r, th->light_g, th->light_b, ra };
+            T3DBuildVert g3 = { rxp - rhw, 0.044f, rzp - rhd, 0,1,0, 0,0, th->light_r, th->light_g, th->light_b, ra };
+            t3d_dyn_quad_vc(&g0, &g1, &g2, &g3);
+        }
+
+        // Subtle dark warm chimney flue smoke wisps (rendered before flames)
+        for (int i = 0; i < MAX_SMOKE_PARTICLES; i++) {
+            const SmokeParticle *sm = &fs->smoke[i];
+            float u = sm->age / sm->life;
+            if (u < 0.0f || u > 1.0f) continue;
+            float sa = sinf(u * 3.14159f) * 0.14f;
+            float ssz = sm->base_sz * (0.75f + 0.85f * u);
+            draw_billboard_quad(sm->x, sm->y, sm->z,
+                                ssz, ssz, ssz, rx, rz,
+                                0.18f, 0.14f, 0.12f, sa);
+        }
 
         // Warm mantle candle halos (3 pillar candles)
         static const float candles[3][3] = {
@@ -377,18 +447,17 @@ void fire_render_effects(const FireSystem *fs,
         };
         for (int c = 0; c < 3; c++) {
             float cf = 0.88f + 0.12f * sinf(t * (7.5f + c * 2.1f) + c * 1.7f);
-            glColor4f(1.00f, 0.62f, 0.16f, 0.32f * cf);
             draw_billboard_quad(candles[c][0], candles[c][1], candles[c][2],
-                                0.15f * cf, 0.14f * cf, 0.16f * cf, rx, rz);
+                                0.15f * cf, 0.14f * cf, 0.16f * cf, rx, rz,
+                                1.00f, 0.62f, 0.16f, 0.32f * cf);
         }
     }
-    glEnd();
+    t3d_dyn_end_quads();
 
     // ---------------------------------------------------------
     // 2. Layered Animated 3D Flame Tongues (Outer -> Mid -> Hot Core!)
     // ---------------------------------------------------------
-    glBindTexture(GL_TEXTURE_2D, tex_flame);
-    glBegin(GL_QUADS);
+    t3d_dyn_begin_quads(tex_flame, T3D_ROOM_SCALE, true, false, false, false);
     for (int pass = 0; pass < 3; pass++) {
         for (int i = 0; i < MAX_FLAME_PARTICLES; i++) {
             const FlameParticle *p = &fs->flames[i];
@@ -411,7 +480,7 @@ void fire_render_effects(const FireSystem *fs,
                 r = th->outer_r;
                 g = th->outer_g * (1.0f - 0.30f * u);
                 b = th->outer_b;
-                alpha *= 0.84f;
+                alpha *= 0.72f;
                 z_bias = -0.04f;
             } else if (pass == 1) {
                 // Vibrant golden-orange mid flames
@@ -419,7 +488,7 @@ void fire_render_effects(const FireSystem *fs,
                 r = th->mid_r * (1.0f - m) + th->outer_r * m;
                 g = th->mid_g * (1.0f - m) + th->outer_g * m;
                 b = th->mid_b * (1.0f - m) + th->outer_b * m;
-                alpha *= 0.90f;
+                alpha *= 0.80f;
                 z_bias = 0.02f;
             } else {
                 // Incandescent hot yellow-white inner core flames (front)
@@ -427,7 +496,7 @@ void fire_render_effects(const FireSystem *fs,
                 r = th->core_r * (1.0f - m) + th->mid_r * m;
                 g = th->core_g * (1.0f - m) + th->mid_g * m;
                 b = th->core_b * (1.0f - m) + th->mid_b * m;
-                alpha *= 0.94f;
+                alpha *= 0.88f;
                 z_bias = 0.07f;
             }
 
@@ -435,8 +504,8 @@ void fire_render_effects(const FireSystem *fs,
                 alpha *= 0.35f;
             }
 
-            glColor4f(r, g, b, clampf(alpha, 0.0f, 0.96f));
-            draw_billboard_quad(p->x, p->y, p->z + z_bias, w * 0.5f, h * 0.18f, h * 0.82f, rx, rz);
+            draw_billboard_quad(p->x, p->y, p->z + z_bias, w * 0.5f, h * 0.18f, h * 0.82f, rx, rz,
+                                r, g, b, clampf(alpha, 0.0f, 0.96f));
         }
     }
 
@@ -450,18 +519,17 @@ void fire_render_effects(const FireSystem *fs,
         for (int c = 0; c < 3; c++) {
             float sway = 0.008f * sinf(t * (6.2f + c * 1.9f) + c);
             float stretch = 0.90f + 0.16f * sinf(t * (9.1f + c * 2.3f));
-            glColor4f(1.00f, 0.84f, 0.34f, 0.95f);
             draw_billboard_quad(candles[c][0] + sway, candles[c][1], candles[c][2],
-                                0.028f, 0.008f, 0.078f * stretch, rx, rz);
+                                0.028f, 0.008f, 0.078f * stretch, rx, rz,
+                                1.00f, 0.84f, 0.34f, 0.95f);
         }
     }
-    glEnd();
+    t3d_dyn_end_quads();
 
     // ---------------------------------------------------------
     // 3. Swirling Sparks & Rising Embers
     // ---------------------------------------------------------
-    glBindTexture(GL_TEXTURE_2D, tex_spark);
-    glBegin(GL_QUADS);
+    t3d_dyn_begin_quads(tex_spark, T3D_ROOM_SCALE, true, false, false, false);
     for (int i = 0; i < MAX_SPARK_PARTICLES; i++) {
         const SparkParticle *s = &fs->sparks[i];
         float u = s->age / s->life;
@@ -476,30 +544,24 @@ void fire_render_effects(const FireSystem *fs,
         float b = th->spark_b * (1.0f - cool) + th->outer_b * cool;
 
         float sz = s->size * (1.0f - 0.45f * u);
-        glColor4f(r, g, b, clampf(alpha, 0.0f, 1.0f));
-        draw_billboard_quad(s->x, s->y, s->z, sz, sz, sz * 1.4f, rx, rz);
+        float streak = sz * (1.4f + clampf(s->vy * 0.8f, 0.0f, 1.4f));
+        draw_billboard_quad(s->x, s->y, s->z, sz, sz, streak, rx, rz,
+                            r, g, b, clampf(alpha, 0.0f, 1.0f));
     }
-    glEnd();
+    t3d_dyn_end_quads();
 
     // ---------------------------------------------------------
     // 4. Cozy Mug Steam Wisps
     // ---------------------------------------------------------
-    glBindTexture(GL_TEXTURE_2D, tex_glow);
-    glBegin(GL_QUADS);
+    t3d_dyn_begin_quads(tex_glow, T3D_ROOM_SCALE, true, false, false, false);
     for (int i = 0; i < MAX_STEAM_PARTICLES; i++) {
         const SteamParticle *st = &fs->steam[i];
         float u = st->age / st->life;
         if (u < 0.0f || u > 1.0f) continue;
         float alpha = sinf(u * 3.14159f) * 0.16f;
         float sz = 0.032f + 0.065f * u;
-        glColor4f(0.92f, 0.88f, 0.84f, alpha);
-        draw_billboard_quad(st->x, st->y, st->z, sz, sz, sz, rx, rz);
+        draw_billboard_quad(st->x, st->y, st->z, sz, sz, sz, rx, rz,
+                            0.92f, 0.88f, 0.84f, alpha);
     }
-    glEnd();
-
-    // Restore GL state
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_LIGHTING);
+    t3d_dyn_end_quads();
 }

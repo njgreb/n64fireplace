@@ -404,6 +404,248 @@ def gen_painting():
     img.save(os.path.join(OUT_DIR, "painting.png"))
 
 
+def gen_painting_spring():
+    """64x32 cozy 90s N64 spring cherry-blossom meadow & twilight brook painting."""
+    w, h = 64, 32
+    img = Image.new("RGBA", (w, h))
+    px = img.load()
+    rng = random.Random(404)
+    stars = [(rng.randint(14, w - 15), rng.randint(2, 11), rng.uniform(0.5, 0.9)) for _ in range(10)]
+
+    for y in range(h):
+        for x in range(w):
+            t = y / float(h)
+            # Soft twilight-lavender to rose-dusk gradient
+            r = 56 + 78 * (t ** 1.1)
+            g = 48 + 56 * (t ** 1.2)
+            b = 108 + 42 * (1.0 - abs(t - 0.45))
+
+            # Distant rolling spring hills
+            hill1 = 18.5 - 3.5 * math.sin(x * 0.12 + 0.4)
+            hill2 = 21.5 - 2.5 * math.cos(x * 0.16 - 0.6)
+            if y >= hill1:
+                r, g, b = 36, 72, 58
+            if y >= hill2:
+                r, g, b = 46, 108, 62
+
+            # Winding silver-blue spring brook in the valley
+            brook_cx = 34.0 + (y - 21.0) * 1.15 + 2.5 * math.sin(y * 0.45)
+            brook_w = 1.4 + max(0.0, y - 21.0) * 0.42
+            if y >= 21 and abs(x - brook_cx) < brook_w:
+                r, g, b = 82, 146, 208
+
+            # Warm cottage window dot on the distant hillside
+            if 44 <= x <= 46 and 20 <= y <= 21:
+                r, g, b = 252, 204, 112
+
+            # Framing cherry blossom boughs on left and right edges
+            left_bough = (x < 14 and y < 17 and (x * 0.6 + y * 0.85) < 15.5)
+            right_bough = (x > 49 and y < 15 and ((w - 1 - x) * 0.65 + y * 0.85) < 14.5)
+            if left_bough or right_bough:
+                n = hash2d(x, y, 421)
+                if n > 0.25:
+                    if n > 0.72:
+                        r, g, b = 252, 212, 228
+                    else:
+                        r, g, b = 236, 142, 178
+                elif y < 8:
+                    r, g, b = 86, 54, 42
+
+            # Tiny blossoms on the grass & drifting petals
+            if y >= 24 and hash2d(x, y, 433) > 0.93:
+                r, g, b = 248, 178, 206
+
+            px[x, y] = (clamp(r), clamp(g), clamp(b), 255)
+
+    for sx, sy, sb in stars:
+        cr, cg, cb, _ = px[sx, sy]
+        if sy < 11:
+            px[sx, sy] = (clamp(cr + 150 * sb), clamp(cg + 145 * sb), clamp(cb + 185 * sb), 255)
+
+    # Drifting blossom petals in the twilight air
+    for px_x, px_y in [(18, 10), (24, 15), (39, 12), (47, 16), (13, 21)]:
+        px[px_x, px_y] = (250, 194, 216, 255)
+
+    img.save(os.path.join(OUT_DIR, "painting_spring.png"))
+
+
+def gen_painting_summer():
+    """64x32 cozy 90s N64 warm summer dusk lake & firefly cove painting."""
+    w, h = 64, 32
+    img = Image.new("RGBA", (w, h))
+    px = img.load()
+    rng = random.Random(704)
+    stars = [(rng.randint(3, w - 4), rng.randint(1, 10), rng.uniform(0.5, 0.95)) for _ in range(14)]
+
+    for y in range(h):
+        for x in range(w):
+            t = y / float(h)
+            # Indigo zenith fading into warm amber-violet summer dusk horizon
+            if t < 0.62:
+                u = t / 0.62
+                r = 24 + 98 * (u ** 1.6)
+                g = 28 + 64 * (u ** 1.5)
+                b = 88 + 44 * math.sin(u * math.pi)
+            else:
+                r, g, b = 28, 42, 84
+
+            # Summer dusk sun-glow halo behind low hills
+            dist_sun = math.hypot((x - 32.0) * 0.65, y - 17.5)
+            if dist_sun < 12.0 and y < 20:
+                glow = (1.0 - dist_sun / 12.0) ** 1.5
+                r += 110 * glow
+                g += 68 * glow
+                b += 24 * glow
+
+            # Pine-forested lake shoreline around y=19..22
+            shore_h = 19.0 - 2.4 * abs(math.sin(x * 0.24 + 0.5)) - 1.2 * math.cos(x * 0.72)
+            if 18 <= y < 22 and y >= shore_h:
+                r, g, b = 18, 44, 30
+
+            # Shimmering twilight lake (y >= 22)
+            if y >= 22:
+                wt = (y - 22) / 10.0
+                r = 26 + 34 * (1.0 - wt)
+                g = 46 + 32 * (1.0 - wt)
+                b = 96 + 36 * (1.0 - abs(wt - 0.4))
+                # Warm golden sunset reflection column
+                if abs(x - 32) < (4.2 - wt * 1.4) and ((x + y) & 1) == 0:
+                    r += 126
+                    g += 86
+                    b += 18
+
+            # Cozy lakeside cabin dot & reflection
+            if 13 <= x <= 16 and 18 <= y <= 19:
+                r, g, b = 250, 188, 76
+            if 14 <= x <= 15 and 23 <= y <= 25 and (y & 1):
+                r, g, b = 220, 158, 66
+
+            px[x, y] = (clamp(r), clamp(g), clamp(b), 255)
+
+    for sx, sy, sb in stars:
+        cr, cg, cb, _ = px[sx, sy]
+        if sy < 11:
+            px[sx, sy] = (clamp(cr + 165 * sb), clamp(cg + 170 * sb), clamp(cb + 205 * sb), 255)
+
+    # Warm yellow-green firefly specks hovering near the pine shore
+    for fx, fy in [(9, 21), (20, 23), (27, 20), (42, 22), (51, 20), (57, 24)]:
+        px[fx, fy] = (218, 252, 108, 255)
+
+    img.save(os.path.join(OUT_DIR, "painting_summer.png"))
+
+
+def gen_painting_xmas():
+    """64x32 cozy 90s N64 winter Christmas village & Santa sleigh moonlit painting."""
+    w, h = 64, 32
+    img = Image.new("RGBA", (w, h))
+    px = img.load()
+    rng = random.Random(1225)
+    stars = [(rng.randint(2, w - 3), rng.randint(1, 13), rng.uniform(0.55, 1.0)) for _ in range(22)]
+
+    moon_cx, moon_cy, moon_r = 14.0, 8.0, 4.4
+
+    for y in range(h):
+        for x in range(w):
+            t = y / float(h)
+            # Deep snowy winter night indigo gradient
+            r = 10 + 18 * (t ** 1.3)
+            g = 18 + 30 * (t ** 1.2)
+            b = 52 + 48 * (1.0 - abs(t - 0.45))
+
+            # Soft glowing moon halo in the upper-left sky
+            md = math.hypot(x - moon_cx, y - moon_cy)
+            if md < 9.5:
+                halo = max(0.0, 1.0 - md / 9.5) ** 1.8
+                r += 75 * halo
+                g += 82 * halo
+                b += 96 * halo
+            if md < moon_r:
+                r, g, b = 250, 246, 222
+
+            # Distant snowy peaks
+            peak1 = 19 - 9 * max(0.0, 1.0 - abs(x - 22) / 14.0)
+            peak2 = 18 - 11 * max(0.0, 1.0 - abs(x - 44) / 16.0)
+            peak3 = 20 - 8 * max(0.0, 1.0 - abs(x - 58) / 11.0)
+            mtn = min(peak1, peak2, peak3)
+            if y >= mtn:
+                if y < mtn + 4.0:
+                    r, g, b = 224, 232, 246
+                else:
+                    r, g, b = 42, 54, 82
+
+            # Rolling snow-blanketed valley floor
+            valley_y = 23.5 + 1.0 * math.sin(x * 0.14)
+            if y >= valley_y:
+                shade = 0.88 + 0.12 * math.sin(x * 0.25 + y * 0.4)
+                r, g, b = 204 * shade, 220 * shade, 240 * shade
+
+            # Dark evergreen pine silhouettes along the valley edges
+            if x < 20 or x > 50:
+                tree_h = 24.5 - 4.2 * abs(math.sin(x * 0.48)) - 1.8 * math.sin(x * 1.15)
+                if y >= tree_h:
+                    if y < tree_h + 1.3:
+                        r, g, b = 212, 228, 244  # snow-dusted tips
+                    else:
+                        r, g, b = 16, 42, 30
+
+            # Cozy snow-roofed Christmas cabin in center-left valley
+            if 24 <= x <= 34:
+                roof_y = 20.5 + abs(x - 29.0) * 0.65
+                if roof_y <= y < 23.8:
+                    r, g, b = 232, 240, 250  # thick snow roof
+                elif 23.8 <= y <= 29:
+                    r, g, b = 96, 56, 32     # warm timber cabin walls
+                    if (26 <= x <= 27 or 31 <= x <= 32) and 25 <= y <= 27:
+                        r, g, b = 252, 198, 78  # warm glowing cabin windows
+                    elif 28 <= x <= 29 and 26 <= y <= 29:
+                        r, g, b = 64, 36, 20    # cabin door
+
+            # Lit evergreen village tree beside the cabin (x=42..50, y=16..29)
+            if 42 <= x <= 50 and 16 <= y <= 29:
+                half_w = (y - 15.5) * 0.34
+                if abs(x - 46.0) <= half_w:
+                    r, g, b = 18, 66, 34
+                elif 28 <= y <= 29 and 45 <= x <= 47:
+                    r, g, b = 78, 46, 26
+
+            px[x, y] = (clamp(r), clamp(g), clamp(b), 255)
+
+    # Tiny village tree Christmas lights + bright star topper
+    px[46, 15] = (255, 228, 86, 255)
+    tree_lights = [
+        (45, 19, (245, 50, 50)),
+        (47, 20, (252, 214, 64)),
+        (44, 22, (80, 225, 255)),
+        (46, 23, (245, 50, 50)),
+        (48, 24, (252, 214, 64)),
+        (43, 26, (252, 214, 64)),
+        (45, 26, (80, 225, 255)),
+        (48, 27, (245, 50, 50)),
+    ]
+    for lx, ly, col in tree_lights:
+        px[lx, ly] = (col[0], col[1], col[2], 255)
+
+    # Tiny dark silhouette of Santa's sleigh + 2 reindeer arcing across the moon
+    sleigh_pixels = [
+        (10, 9), (11, 9), (12, 9),
+        (10, 8), (11, 8), (12, 8), (10, 7),
+        (13, 8), (14, 8),
+        (15, 8), (15, 7), (16, 7), (15, 9),
+        (17, 7), (17, 6), (18, 6), (17, 8),
+    ]
+    for sx, sy in sleigh_pixels:
+        px[sx, sy] = (22, 26, 50, 255)
+
+    # Twinkling winter stars (skip inside bright moon)
+    for sx, sy, sb in stars:
+        if math.hypot(sx - moon_cx, sy - moon_cy) < moon_r + 1.5:
+            continue
+        cr, cg, cb, _ = px[sx, sy]
+        px[sx, sy] = (clamp(cr + 195 * sb), clamp(cg + 205 * sb), clamp(cb + 225 * sb), 255)
+
+    img.save(os.path.join(OUT_DIR, "painting_xmas.png"))
+
+
 def gen_flame():
     """
     32x32 smooth soft-edged grayscale/alpha flame tongue sprite.
@@ -496,10 +738,13 @@ def main():
     gen_rug()
     gen_iron()
     gen_painting()
+    gen_painting_spring()
+    gen_painting_summer()
+    gen_painting_xmas()
     gen_flame()
     gen_glow()
     gen_spark()
-    print(f"Generated 13 N64 textures in {OUT_DIR}")
+    print(f"Generated 16 N64 textures in {OUT_DIR}")
 
 
 if __name__ == "__main__":

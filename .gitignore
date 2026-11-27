@@ -5,6 +5,7 @@ assets_raw/
 *.z64
 *.elf
 *.dfs
+*.rtc
 
 # macOS
 .DS_Store

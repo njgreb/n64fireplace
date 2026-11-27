@@ -1,16 +1,18 @@
 BUILD_DIR = build
 include $(N64_INST)/include/n64.mk
+include $(N64_INST)/include/t3d.mk
 
 N64_ROM_TITLE = "HEARTH 64"
+N64_ROM_RTC = 1
 
-SRC = src/main.c src/scene.c src/fire.c src/turkey.c
+SRC = src/main.c src/t3d_gfx.c src/scene.c src/fire.c src/turkey.c
 OBJS = $(SRC:%.c=$(BUILD_DIR)/%.o)
 
-TEX_RGBA16 = stone brick wood_mantle floor bark log_end coals rug iron painting
+TEX_RGBA16 = stone brick wood_mantle floor bark log_end coals rug iron painting painting_spring painting_summer painting_xmas
 TEX_IA8    = flame glow spark
 
-AUDIO_LOOPS = fire_bed rain_loop ambient_loop
-AUDIO_SFX   = crackle_0 crackle_1 crackle_2 crackle_3 crackle_4 crackle_5 stoke log_thud gobble ribbit ding magic meow
+AUDIO_LOOPS = fire_bed rain_loop ambient_loop christmas_loop snow_loop
+AUDIO_SFX   = crackle_0 crackle_1 crackle_2 crackle_3 crackle_4 crackle_5 stoke log_thud gobble ribbit ding magic meow penguin snowglobe
 
 ASSETS = \
 	$(TEX_RGBA16:%=filesystem/%.sprite) \
@@ -18,7 +20,7 @@ ASSETS = \
 	$(AUDIO_LOOPS:%=filesystem/%.wav64) \
 	$(AUDIO_SFX:%=filesystem/%.wav64)
 
-N64_CFLAGS += -O2 -Wall -Wextra
+N64_CFLAGS += -std=gnu2x -O2 -Wall -Wextra
 
 all: hearth64.z64
 
@@ -53,6 +55,16 @@ filesystem/rain_loop.wav64: assets_raw/audio/rain_loop.wav
 	@$(N64_AUDIOCONV) --wav-compress 1 --wav-loop true -o filesystem $<
 
 filesystem/ambient_loop.wav64: assets_raw/audio/ambient_loop.wav
+	@mkdir -p $(dir $@)
+	@echo "    [AUDIO LOOP] $@"
+	@$(N64_AUDIOCONV) --wav-compress 1 --wav-loop true -o filesystem $<
+
+filesystem/christmas_loop.wav64: assets_raw/audio/christmas_loop.wav
+	@mkdir -p $(dir $@)
+	@echo "    [AUDIO LOOP] $@"
+	@$(N64_AUDIOCONV) --wav-compress 1 --wav-loop true -o filesystem $<
+
+filesystem/snow_loop.wav64: assets_raw/audio/snow_loop.wav
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO LOOP] $@"
 	@$(N64_AUDIOCONV) --wav-compress 1 --wav-loop true -o filesystem $<
